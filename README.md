@@ -9,11 +9,25 @@ your terminal.
 
 ![devdash](docs/screenshot.png)
 
-Try it before configuring anything — this is the screenshot above, live:
+## Try it in one command
+
+No install, no credentials, nothing to configure — this renders the screenshot
+above with sample data:
 
 ```bash
 go run github.com/tptodorov/devdash@latest -demo
 ```
+
+Once you have the four environment variables from [Configure](#configure), the
+same command shows your real tickets:
+
+```bash
+go run github.com/tptodorov/devdash@latest
+```
+
+`go run` compiles and runs it in one step, so it is the quickest way to try devdash
+without adding a binary to your `PATH`. If you decide to keep it, see
+[Install](#install).
 
 ## Why
 
@@ -80,7 +94,7 @@ devdash help          # the REQUIREMENTS section reports each variable as set or
 
 ```bash
 cd ~/code/your-repo
-devdash
+devdash                 # or: go run github.com/tptodorov/devdash@latest
 ```
 
 Run from inside a repository and the pull requests are narrowed to it; the header
@@ -224,17 +238,25 @@ nothing is reported — that is the ordinary case.
 
 ## Reference
 
-| Flag | Environment | Default |
-| ---- | ----------- | ------- |
-| `-refresh` | `DEVDASH_REFRESH` | `10s`; `0` disables, minimum `2s` |
-| `-jql` | `DEVDASH_JQL` | assigned to you, not Done |
-| `-pr-query` | `DEVDASH_PR_QUERY` | open and recently merged, scoped to this repo |
-| `-all-repos` | — | scoped to the current repository |
-| `-include-archived` | — | archived-repo PRs hidden |
-| `-no-nerd-font` | — | Nerd Font glyphs |
-| `-no-links` | — | hyperlinks on |
-| `-once` | — | interactive |
-| `-demo` | — | real data |
+| Flag | What it does | Environment | Default |
+| ---- | ------------ | ----------- | ------- |
+| `-demo` | show sample data instead of contacting JIRA or GitHub; needs no credentials | — | real data |
+| `-once` | print one snapshot and exit instead of running the interactive UI | — | interactive |
+| `-refresh` | auto-refresh interval, e.g. `30s` or `2m`; `0` disables it | `DEVDASH_REFRESH` | `10s`, minimum `2s` |
+| `-all-repos` | show pull requests from every repository, not just this directory's | — | scoped to this repo |
+| `-jql` | JQL selecting which tickets to show | `DEVDASH_JQL` | assigned to you, not Done |
+| `-pr-query` | GitHub search selecting which pull requests to show; overrides repo scoping | `DEVDASH_PR_QUERY` | open and recently merged, scoped to this repo |
+| `-include-archived` | keep pull requests whose repository is archived | — | archived hidden |
+| `-no-nerd-font` | use plain Unicode instead of Nerd Font glyphs | — | Nerd Font glyphs |
+| `-no-links` | render plain text instead of OSC 8 terminal hyperlinks | — | hyperlinks on |
+
+There is also a `help` subcommand, which reports whether each required
+environment variable is set and lists every API call the tool makes:
+
+```bash
+devdash help
+devdash help -no-nerd-font    # describes the plain glyph set instead
+```
 
 Scope it to a project or an organisation by overriding the queries:
 
