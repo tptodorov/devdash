@@ -357,3 +357,27 @@ func TestPRStateColours(t *testing.T) {
 // The block is always three characters, whatever the PR's state.
 
 // The old words must be gone, and the block must be far shorter than they were.
+
+// "devdash help -no-nerd-font" must describe the plain set, not the glyphs it is
+// being asked to avoid. Help runs before flag.Parse, so this is easy to get wrong.
+func TestHelpHonoursNoNerdFontFlag(t *testing.T) {
+	t.Cleanup(func() { useNerdFont = true })
+
+	useNerdFont = true
+	applyHelpFlags([]string{"-no-nerd-font"})
+	if useNerdFont {
+		t.Error("applyHelpFlags did not turn nerd fonts off")
+	}
+
+	useNerdFont = true
+	applyHelpFlags([]string{"--no-nerd-font"})
+	if useNerdFont {
+		t.Error("applyHelpFlags ignored the double-dash form")
+	}
+
+	useNerdFont = true
+	applyHelpFlags([]string{"-once", "-all-repos"})
+	if !useNerdFont {
+		t.Error("applyHelpFlags turned nerd fonts off for an unrelated flag")
+	}
+}

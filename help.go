@@ -13,6 +13,17 @@ var helpTopics = map[string]bool{
 	"help": true, "-h": true, "-help": true, "--help": true,
 }
 
+// applyHelpFlags honours the flags that change what the help text should show.
+// Help is handled before flag.Parse, so without this "devdash help -no-nerd-font"
+// would print the glyphs it is being asked to avoid.
+func applyHelpFlags(args []string) {
+	for _, a := range args {
+		if a == "-no-nerd-font" || a == "--no-nerd-font" {
+			useNerdFont = false
+		}
+	}
+}
+
 func section(w io.Writer, name string) {
 	fmt.Fprintf(w, "\n%s\n", titleStyle.Render(name))
 }

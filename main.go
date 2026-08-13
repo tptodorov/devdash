@@ -48,6 +48,7 @@ func main() {
 	// above are already registered, so the help text can list their real
 	// defaults.
 	if len(os.Args) > 1 && helpTopics[os.Args[1]] {
+		applyHelpFlags(os.Args[2:])
 		writeHelp(os.Stdout)
 		return
 	}
