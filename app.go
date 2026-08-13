@@ -225,9 +225,9 @@ func (a *app) refresh() tea.Cmd {
 				warn = fmt.Errorf("child counts unavailable: %w", warn)
 			}
 			// Symphony is rediscovered and queried on every refresh.
-			state, endpoint := symphonyLookup(ctx)
-			applySymphony(tickets, state)
-			return ticketsMsg{tickets: tickets, warn: warn, symphonyURL: endpoint}
+			info := symphonyLookup(ctx)
+			applySymphony(tickets, info)
+			return ticketsMsg{tickets: tickets, warn: warn, symphonyURL: info.endpoint}
 		})
 	}
 
@@ -263,24 +263,36 @@ func (a *app) refresh() tea.Cmd {
 //
 // Symphony not running is the ordinary case, so every failure here is silent: a
 // banner would cry wolf on most refreshes.
-func symphonyLookup(ctx context.Context) (map[string]string, string) {
+func symphonyLookup(ctx context.Context) symphonyInfo {
+	var info symphonyInfo
+
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, ""
+		return info
 	}
-	endpoint, err := symphonyEndpoint(cwd)
-	if err != nil {
-		return nil, "" // no WORKFLOW.md, or no server block in it
+	// The configuration is a local file, so the conditions are known even when
+	// the server is not running: a ticket can be queued with Symphony stopped.
+	if cfg, err := readSymphonyConfig(cwd); err == nil {
+		info.cfg, info.haveCfg = cfg, true
+		if cfg.Server.Port > 0 {
+			host := cfg.Server.Host
+			if host == "" {
+				host = symphonyDefaultHost
+			}
+			info.endpoint = fmt.Sprintf("http://%s:%d", host, cfg.Server.Port)
+		}
+	}
+	if info.endpoint == "" {
+		return info
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, symphonyTimeout)
 	defer cancel()
 
-	state, err := SymphonyState(ctx, &http.Client{Timeout: symphonyTimeout}, endpoint)
-	if err != nil {
-		return nil, "" // not listening, or not answering
+	if live, err := SymphonyState(ctx, &http.Client{Timeout: symphonyTimeout}, info.endpoint); err == nil {
+		info.live = live
 	}
-	return state, endpoint
+	return info
 }
 
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

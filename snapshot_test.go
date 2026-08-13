@@ -101,6 +101,18 @@ func TestDemoDataCoversEveryState(t *testing.T) {
 	if withSymphony == 0 {
 		t.Error("demo has no Symphony session")
 	}
+	// Scheduled and actively worked look different, so the demo shows both.
+	var symStates = map[string]bool{}
+	for _, tk := range tickets {
+		if tk.Symphony != "" {
+			symStates[tk.Symphony] = true
+		}
+	}
+	for _, want := range []string{SymphonyRunning, SymphonyScheduled} {
+		if !symStates[want] {
+			t.Errorf("demo has no %s Symphony ticket", want)
+		}
+	}
 
 	states := map[string]bool{}
 	var drafts, failing, pending, approved, changes int

@@ -242,8 +242,8 @@ their links. Nothing that goes stale is included — no status, no CI state.
 
 ## Symphony (optional)
 
-If a local [Symphony](https://github.com/openai/symphony) instance is running, the
-tickets it currently has in hand are marked in a column at the right-hand edge:
+Tickets that a local [Symphony](https://github.com/openai/symphony) has in hand,
+or has been given, are marked in a column at the right-hand edge:
 
 | Marker | Meaning |
 | --- | --- |
@@ -369,6 +369,12 @@ python3 scripts/screenshot.py ./devdash docs/screenshot.png
 It needs a [Nerd Font](https://www.nerdfonts.com/) installed to draw the pull
 request glyphs. `TestDemoDataCoversEveryState` keeps the sample data covering
 everything the documentation claims to show.
+
+To see what `S` would do to every one of your tickets without changing anything:
+
+```bash
+DEVDASH_DRYRUN_DIR=/path/to/repo go test -run TestDryRunSchedulePlans -v
+```
 
 One test suite talks to real JIRA and is skipped unless you point it at a ticket
 you do not mind moving. It transitions the ticket and moves it back:

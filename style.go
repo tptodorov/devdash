@@ -49,9 +49,12 @@ const (
 	symphonyIconRetrying = "↻"
 )
 
-// symphonyMarker is the glyph and colour for a Symphony session state.
+// symphonyMarker is the glyph and colour for a Symphony session state. Scheduled
+// uses the same grey as a draft pull request: queued, not yet acted on.
 func symphonyMarker(state string) (string, lipgloss.Style) {
 	switch state {
+	case SymphonyScheduled:
+		return symphonyIconRunning, faintStyle
 	case SymphonyRunning:
 		return symphonyIconRunning, lipgloss.NewStyle().Foreground(accent)
 	case SymphonyBlocked:

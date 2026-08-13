@@ -18,6 +18,11 @@ const (
 	SymphonyRunning  = "running"
 	SymphonyBlocked  = "blocked"
 	SymphonyRetrying = "retrying"
+	// SymphonyScheduled means the ticket satisfies every condition in
+	// WORKFLOW.md but Symphony has no session for it yet. Symphony polls on an
+	// interval, so this is the ordinary state between scheduling a ticket and
+	// work starting on it.
+	SymphonyScheduled = "scheduled"
 )
 
 const (
@@ -218,9 +223,32 @@ func SymphonyState(ctx context.Context, hc *http.Client, baseURL string) (map[st
 	return out, nil
 }
 
-// applySymphony marks the tickets Symphony is working on.
-func applySymphony(tickets []Ticket, state map[string]string) {
+// symphonyInfo is everything one refresh learned about the local Symphony: which
+// tickets it has in hand, where it lives, and the conditions it picks tickets up
+// under.
+type symphonyInfo struct {
+	live     map[string]string // issue key -> running, blocked or retrying
+	endpoint string
+	cfg      symphonyConfig
+	haveCfg  bool
+}
+
+// applySymphony marks each ticket with what Symphony is doing about it.
+//
+// A live session wins, because it is what is happening now. Otherwise a ticket
+// that already meets every condition in WORKFLOW.md is marked scheduled: queued,
+// but not yet picked up. The distinction matters because Symphony polls, so a
+// freshly scheduled ticket sits waiting for up to one interval.
+func applySymphony(tickets []Ticket, info symphonyInfo) {
 	for i := range tickets {
-		tickets[i].Symphony = state[strings.ToUpper(tickets[i].Key)]
+		if state, busy := info.live[strings.ToUpper(tickets[i].Key)]; busy {
+			tickets[i].Symphony = state
+			continue
+		}
+		if info.haveCfg && planSchedule(info.cfg, tickets[i]).nothingToDo() {
+			tickets[i].Symphony = SymphonyScheduled
+			continue
+		}
+		tickets[i].Symphony = ""
 	}
 }

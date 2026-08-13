@@ -236,10 +236,10 @@ func TestApplySymphony(t *testing.T) {
 		{Key: "proj-100"}, // matched case-insensitively
 		{Key: "PROJ-999"}, // Symphony is not on it
 	}
-	applySymphony(tickets, map[string]string{
+	applySymphony(tickets, symphonyInfo{live: map[string]string{
 		"PROJ-17538": SymphonyRunning,
 		"PROJ-100":   SymphonyBlocked,
-	})
+	}})
 
 	if tickets[0].Symphony != SymphonyRunning {
 		t.Errorf("PROJ-17538 = %q, want running", tickets[0].Symphony)
@@ -324,5 +324,70 @@ func TestSymphonyColumn(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A ticket can be queued for Symphony without Symphony having picked it up:
+// Symphony polls, so this is the ordinary state right after pressing S. The two
+// must look different, or scheduling gives no feedback until work starts.
+func TestScheduledIsDistinctFromActivelyWorked(t *testing.T) {
+	info := symphonyInfo{
+		haveCfg: true,
+		cfg:     testConfig(),
+		live:    map[string]string{"PROJ-2": SymphonyRunning},
+	}
+	tickets := []Ticket{
+		// Eligible, no session yet.
+		{Key: "PROJ-1", Status: "To Do", Labels: []string{"symphony-ready"}},
+		// Eligible and being worked.
+		{Key: "PROJ-2", Status: "In Progress", Labels: []string{"symphony-ready"}},
+		// Not eligible: no label.
+		{Key: "PROJ-3", Status: "To Do"},
+		// Not eligible: parked in a state Symphony ignores.
+		{Key: "PROJ-4", Status: "Awaiting CR", Labels: []string{"symphony-ready"}},
+		// Not eligible: finished.
+		{Key: "PROJ-5", Status: "Done", Labels: []string{"symphony-ready"}},
+	}
+	applySymphony(tickets, info)
+
+	want := []string{SymphonyScheduled, SymphonyRunning, "", "", ""}
+	for i, w := range want {
+		if tickets[i].Symphony != w {
+			t.Errorf("%s = %q, want %q", tickets[i].Key, tickets[i].Symphony, w)
+		}
+	}
+
+	// Scheduled is grey, like a draft pull request; running is the accent colour.
+	schedIcon, schedStyle := symphonyMarker(SymphonyScheduled)
+	runIcon, runStyle := symphonyMarker(SymphonyRunning)
+	if schedIcon != runIcon {
+		t.Errorf("scheduled and running should share the glyph, got %q and %q", schedIcon, runIcon)
+	}
+	if schedStyle.Render("x") == runStyle.Render("x") {
+		t.Error("scheduled and running render identically; the states are indistinguishable")
+	}
+	if faint := faintStyle.Render("x"); schedStyle.Render("x") != faint {
+		t.Errorf("scheduled should use the same grey as a draft PR")
+	}
+}
+
+// A live session outranks eligibility, and with no config nothing is scheduled.
+func TestApplySymphonyPrecedence(t *testing.T) {
+	eligible := Ticket{Key: "PROJ-1", Status: "To Do", Labels: []string{"symphony-ready"}}
+
+	blocked := []Ticket{eligible}
+	applySymphony(blocked, symphonyInfo{
+		haveCfg: true, cfg: testConfig(),
+		live: map[string]string{"PROJ-1": SymphonyBlocked},
+	})
+	if blocked[0].Symphony != SymphonyBlocked {
+		t.Errorf("= %q, want a live session to outrank scheduled", blocked[0].Symphony)
+	}
+
+	// Without WORKFLOW.md there are no conditions to judge against.
+	noCfg := []Ticket{eligible}
+	applySymphony(noCfg, symphonyInfo{})
+	if noCfg[0].Symphony != "" {
+		t.Errorf("= %q, want nothing without a configuration", noCfg[0].Symphony)
 	}
 }

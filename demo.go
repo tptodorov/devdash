@@ -33,9 +33,12 @@ func demoData() ([]Ticket, []PullRequest) {
 			URL:        "https://your-org.atlassian.net/browse/PROJ-301",
 		},
 		{
+			// Queued for Symphony but not picked up yet: Symphony polls, so this
+			// is the ordinary state right after scheduling one.
 			Key: "PROJ-460", Summary: "Ship the static data-plane runtime",
 			Status: "To Do", Category: "To Do", Type: "Task",
-			URL: "https://your-org.atlassian.net/browse/PROJ-460",
+			Symphony: SymphonyScheduled,
+			URL:      "https://your-org.atlassian.net/browse/PROJ-460",
 		},
 		{
 			Key: "TEAM-1204", Summary: "Unified Core Platform",

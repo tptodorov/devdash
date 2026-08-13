@@ -68,9 +68,9 @@ func (a *app) fetchOnce(ctx context.Context) {
 		} else {
 			a.jiraWarn = fmt.Errorf("child counts unavailable: %w", warn)
 		}
-		state, endpoint := symphonyLookup(ctx)
-		applySymphony(a.tickets, state)
-		a.symphonyURL = endpoint
+		info := symphonyLookup(ctx)
+		applySymphony(a.tickets, info)
+		a.symphonyURL = info.endpoint
 	}()
 	go func() {
 		defer wg.Done()

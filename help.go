@@ -130,10 +130,12 @@ func writeHelp(w io.Writer) {
 	row(w, "pull request", "repo and number, coloured by state, with ci and review badges")
 
 	section(w, "SYMPHONY")
-	prose(w, "If a local Symphony instance is running, tickets it has in hand are marked")
-	prose(w, "in a column of their own, which disappears when it has no sessions:")
+	prose(w, "Tickets Symphony has in hand, or has been given, are marked in a column of")
+	prose(w, "their own. Scheduled is grey because nothing is happening yet — Symphony")
+	prose(w, "polls, so a freshly scheduled ticket waits up to one interval:")
 	prose(w, "")
 	for _, s := range []struct{ state, what string }{
+		{SymphonyScheduled, "scheduled, waiting for Symphony to pick it up"},
 		{SymphonyRunning, "Symphony is working on it"},
 		{SymphonyBlocked, "paused waiting for operator input or approval"},
 		{SymphonyRetrying, "waiting for the next retry window"},

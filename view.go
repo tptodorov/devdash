@@ -542,6 +542,7 @@ func (a *app) helpView(lay layout) []string {
 
 	out = append(out, "", groupHeader("SYMPHONY", "", 0, lay.width))
 	for _, s := range []struct{ state, what string }{
+		{SymphonyScheduled, "scheduled, waiting for Symphony to pick it up"},
 		{SymphonyRunning, "Symphony is working on this ticket"},
 		{SymphonyBlocked, "paused waiting for operator input or approval"},
 		{SymphonyRetrying, "waiting for the next retry window"},
