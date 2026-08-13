@@ -299,11 +299,25 @@ git clone https://github.com/tptodorov/devdash
 cd devdash
 go test ./...
 go build -o devdash .
+./devdash -demo          # no credentials needed
 ```
 
-The README screenshot is rendered from `devdash -demo`, so it never contains
-anyone's real tickets. `TestDemoDataCoversEveryState` keeps the sample data
-covering everything the documentation claims to show.
+CI runs on every push and pull request: `gofmt`, `go vet`, `go test -race -cover`,
+and a cross-build for macOS and Linux on amd64 and arm64. Running `gofmt -l .` and
+`go test ./...` locally is enough to predict it.
+
+The README screenshot is generated from demo data, so it never contains anyone's
+real tickets. To regenerate it after a change to the interface:
+
+```bash
+pip install Pillow
+go build -o devdash .
+python3 scripts/screenshot.py ./devdash docs/screenshot.png
+```
+
+It needs a [Nerd Font](https://www.nerdfonts.com/) installed to draw the pull
+request glyphs. `TestDemoDataCoversEveryState` keeps the sample data covering
+everything the documentation claims to show.
 
 One test suite talks to real JIRA and is skipped unless you point it at a ticket
 you do not mind moving. It transitions the ticket and moves it back:
