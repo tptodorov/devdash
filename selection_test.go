@@ -12,9 +12,9 @@ import (
 
 const (
 	// bgEscape is the SGR sequence for the dark-theme selection background, and
-	// colEscape the brighter one marking the column left/right is on.
+	// colEscape the contrasting one marking the column left/right is on.
 	bgEscape  = "48;5;238"
-	colEscape = "48;5;243"
+	colEscape = "48;5;24"
 	// boldEscape is how lipgloss opens a bold run.
 	boldEscape = "\x1b[1;"
 )

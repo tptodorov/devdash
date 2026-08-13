@@ -159,8 +159,8 @@ func TestActiveStopFollowsTheColumn(t *testing.T) {
 	}
 }
 
-// The active column is painted a shade brighter than the rest of the row.
-func TestActiveColumnIsPaintedBrighter(t *testing.T) {
+// The active column is painted in a contrasting colour, not the row's grey.
+func TestActiveColumnIsPainted(t *testing.T) {
 	a := columnApp()
 	lay := a.layout()
 	a.cursor = 0

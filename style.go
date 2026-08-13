@@ -21,8 +21,10 @@ var (
 	// selBg paints the selected row end to end, so the highlight covers the
 	// ticket, the pull request and the space between them. selColBg is a shade
 	// brighter, marking the column left/right is currently on.
-	selBg    = lipgloss.AdaptiveColor{Light: "254", Dark: "238"}
-	selColBg = lipgloss.AdaptiveColor{Light: "250", Dark: "243"}
+	selBg = lipgloss.AdaptiveColor{Light: "254", Dark: "238"}
+	// A contrasting hue, not a brighter grey: two greys a few steps apart in
+	// the 256-colour palette are not distinguishable on most themes.
+	selColBg = lipgloss.AdaptiveColor{Light: "153", Dark: "24"}
 
 	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(accent)
 	normalStyle   = lipgloss.NewStyle().Foreground(fgNormal)

@@ -111,8 +111,8 @@ func writeHelp(w io.Writer) {
 	}
 
 	section(w, "COLUMN NAVIGATION")
-	prose(w, "Left and right walk the columns of the selected row, which is shown a shade")
-	prose(w, "brighter. Enter then opens what that column points at:")
+	prose(w, "Left and right walk the columns of the selected row. The active one is")
+	prose(w, "highlighted in a contrasting colour; enter opens what it points at:")
 	prose(w, "")
 	row(w, "ticket", "the ticket in JIRA")
 	row(w, "children", "a JIRA search for its sub-tickets")

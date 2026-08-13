@@ -130,8 +130,8 @@ Ghostty, WezTerm, Kitty or any terminal that supports links.
 
 ## Column navigation
 
-Left and right walk the columns of the selected row, which is shown a shade
-brighter than the rest of the highlight. Enter opens whatever that column points
+Left and right walk the columns of the selected row, which is highlighted in a
+contrasting colour. Enter opens whatever that column points
 at:
 
 | Column | `enter` opens |
