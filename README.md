@@ -1,251 +1,176 @@
 # devdash
 
-Your active JIRA tickets and the pull requests addressing them, correlated on
-one page.
+Your assigned JIRA tickets and the pull requests addressing them, on one page, in
+your terminal.
+
+[![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ```
-◈ DEVDASH  10 tickets · 3 PRs in https://github.com/acme/platform    ⟳ 10s · 16:57:59
+◈ DEVDASH  9 tickets · 4 PRs in https://github.com/acme/platform          ⟳ 10s · 14:22:07
 
-▌ AWAITING CR ──────────────────────────────────────────────────────────────── 3
-▌ ST    PROJ-17506   Migrate RAM live data plane stores to persisted…  →  platform #1105 ci◌ rev✓
-  T     PROJ-17552   Mark the CI wait helper as manual-only         →  platform #1099 ci✓ rev?
-  ST    PROJ-17538   Add account identifiers configured…    →  platform #1103 ci✓ rev✓
+▌ AWAITING CR ──────────────────────────────────────────────────────────────────────── 2
+  T     PROJ-482   Mark the CI wait helper as manual-only          →   platform #1099 󰄴 rev?
+  ST    PROJ-475   Add account identifiers to each database        →   platform #1103 󰄴 rev✓
 
-▌ IN PROGRESS ──────────────────────────────────────────────────────────────── 2
-  T   4 PROJ-17453   Add a shared database registry…     ·  no PR
-  E  11 PROJ-16617   the on-prem effort                                 ·  no PR
+▌ IN PROGRESS ──────────────────────────────────────────────────────────────────────── 2
+  E  11 PROJ-301   The on-prem effort                              ·  no PR
+  T   4 PROJ-455   Add a shared database registry                  ·  no PR            ♪
 
-▌ PRS WITHOUT AN ACTIVE TICKET ─────────────────────────────────────────────── 1
-  ⇢ sandbox #5 ci✗      feat: Monorepo template with clean architecture…
+▌ BACKLOG ─────────────────────────────────────────────────────────────────────────── 2
+  S     PROJ-198   Spike on package structure                      ·  no PR
+  S     PROJ-204   Improve configuration structure                 ·  no PR
+
+▌ PRS WITHOUT AN ACTIVE TICKET ─────────────────────────────────────────────────────── 1
+  ⇢  sandbox #5 󰅙   Monorepo template with clean architecture
+
+  ↑↓ move   ⏎ ticket   p PR   c copy   s status   r refresh   ? help   q quit
 ```
 
-Tickets are grouped by status, most urgent first, and each group is colour
-coded. Ticket keys and PR references are OSC 8 hyperlinks — ⌘-click them in
-iTerm2, Ghostty, WezTerm, Kitty or any terminal that supports links.
+## Why
 
-## The type and children columns
+The state of your own work is spread across three places: the JIRA board says what
+is assigned to you, GitHub says which pull requests exist, and neither knows about
+the other. Reconciling them is a tab-switching exercise you repeat all day.
 
-The first column abbreviates the issue type; the second counts its sub-tickets.
+devdash puts them on one line each. It also closes three gaps that cost real time:
 
-```
-  T     PROJ-17552    Mark the CI wait helper as manual-only
-  ST    PROJ-17538    Add account identifiers…
-  E  11 PROJ-16617    the on-prem effort
-  T   4 PROJ-17453    Add a shared database registry
-  I  14 TEAM-205732   Unified Core Platform
-```
-
-**Type.** The initial of each word in the type's name, capitalised: `Task` → `T`,
-`Sub-task` → `ST`, `New Feature` → `NF`, `Change Request` → `CR`, `Data Analytics
-Task` → `DAT`. Words split on any non-alphanumeric character, so hyphens, spaces,
-slashes and underscores all count. Nothing is hard-coded, so it works on any
-project's workflow without being taught its types — verified against all 143
-issue types in this JIRA instance. Codes are capped at 4 characters.
-
-Because the rule is purely derived, two types in one view can share a code
-(`Story` and `Security` both give `S`). The `?` help lists **TYPES IN VIEW**,
-generated from the tickets actually loaded, so any collision that really occurs
-is spelled out rather than hidden.
-
-**Children.** The number of issues whose parent is this ticket, any assignee,
-shown in the accent colour. Blank when there are none, and the column disappears
-entirely when nothing in view has children.
-
-Counts come from the child side, with a `parent in (…)` query. An issue's own
-`subtasks` field cannot answer this — it stays empty for epic and initiative
-children, reporting `0` for an epic that actually has 11. That costs one extra
-request per refresh (~0.6s here), skipping sub-tasks since JIRA forbids nesting
-them. If it fails the tickets still render, with a `~ jira: child counts
-unavailable` warning.
-
-All three of these columns — type, children and the ticket key — size themselves
-to the data, so a long project key such as `LONGPROJ-308` widens the key column
-instead of pushing the summary out of alignment.
+- **A merged PR vanishes from `is:open` searches**, so a ticket still in review
+  looks like it has no PR at all. devdash fetches recently merged PRs too.
+- **Approvals can be invisible.** GitHub reports no review decision when the base
+  branch requires none, so an approved PR looks unreviewed. devdash counts
+  approving reviews as well as reading the decision.
+- **Changing a ticket's status meant leaving the terminal.** Press `s`.
 
 ## Requirements
 
-- `JIRA_URL`, `JIRA_USERNAME` and `JIRA_API_TOKEN` in the environment
-- `GITHUB_TOKEN` (or `GH_TOKEN`) holding a token with `repo` scope
+- **Go 1.25+** to install
+- **A JIRA API token** — create one at
+  [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens)
+- **A GitHub token** with `repo` scope
 
-Both APIs are called directly over HTTPS; `devdash` shells out to no external
-binaries for data. If you use the GitHub CLI, a token is one command away:
+A [Nerd Font](https://www.nerdfonts.com/) is recommended for the pull request
+icons. Without one, run with `-no-nerd-font`.
+
+## Install
+
+```bash
+go install github.com/tptodorov/devdash@latest
+```
+
+That puts `devdash` in `$(go env GOPATH)/bin`. Make sure that is on your `PATH`,
+or set `GOBIN` first:
+
+```bash
+GOBIN="$HOME/.local/bin" go install github.com/tptodorov/devdash@latest
+```
+
+## Configure
+
+Four environment variables. Add them to your shell profile:
+
+```bash
+export JIRA_URL='https://your-org.atlassian.net'
+export JIRA_USERNAME='you@your-org.com'      # your Atlassian account email
+export JIRA_API_TOKEN='...'                  # from id.atlassian.com
+export GITHUB_TOKEN='...'                    # a token with repo scope
+```
+
+If you already use the GitHub CLI, the token is one command away:
 
 ```bash
 export GITHUB_TOKEN=$(gh auth token)
 ```
 
-## Usage
+Check what devdash can see:
 
 ```bash
-devdash help                # requirements, keys, and every call it makes
-devdash                     # interactive, auto-refreshing every 10s
-devdash -refresh 30s        # slower refresh
-devdash -refresh 0          # no auto-refresh; press r to refresh manually
-devdash -once               # print one snapshot and exit
-devdash -once -no-links     # snapshot without hyperlink escapes, good for piping
+devdash help          # the REQUIREMENTS section reports each variable as set or missing
 ```
 
-### Keys
-
-| Key              | Action                          |
-| ---------------- | ------------------------------- |
-| `↑`/`k`, `↓`/`j` | move between rows               |
-| `g` / `G`        | jump to first / last row         |
-| `enter`, `o`     | open the selected ticket        |
-| `p`              | open the selected row's PR      |
-| `c`              | copy a shareable snippet        |
-| `s`              | change the ticket's status      |
-| `r`              | refresh now                     |
-| `a`              | toggle automatic refresh        |
-| `?`              | help and legend                 |
-| `q`              | quit                            |
-
-### Flags and environment
-
-| Flag         | Environment          | Default                        |
-| ------------ | -------------------- | ------------------------------ |
-| `-refresh`   | `DEVDASH_REFRESH`  | `10s` (`0` disables; min `2s`) |
-| `-jql`       | `DEVDASH_JQL`      | assigned to you, not Done      |
-| `-pr-query`  | `DEVDASH_PR_QUERY` | `author:@me is:pr is:open`, scoped to this repo |
-| `-all-repos` | —                    | scoped to the current repo     |
-| `-no-links`  | —                    | hyperlinks on                  |
-| `-once`      | —                    | interactive                    |
-| `-include-archived` | —             | archived-repo PRs hidden       |
-
-Scope it to one project or repo by overriding the queries:
+## Quick start
 
 ```bash
-devdash -jql 'assignee = currentUser() AND project = MOD AND statusCategory != Done ORDER BY updated DESC'
-devdash -pr-query 'author:@me is:pr is:open org:acme'
+cd ~/code/your-repo
+devdash
 ```
 
-## Pull request icons
+Run from inside a repository and the pull requests are narrowed to it; the header
+says which one. Run from anywhere else and every repo you have PRs in is included.
 
-Each pull request is shown as `<state> repo #number <checks>`, using the same
-Nerd Font glyphs as [workmux](https://github.com/raine/workmux) so the two read
-the same way side by side:
+```bash
+devdash --help          # everything below, plus every API call the tool makes
+devdash -once           # print one snapshot and exit, for piping or a cron job
+devdash -refresh 30s    # slow the auto-refresh down
+devdash -all-repos      # ignore the current repository, show everything
+```
 
-| State | Nerd Font | Plain | Meaning |
-| ----- | --------- | ----- | ------- |
-| open   | `\uf407`  | `●` | open |
-| draft  | `\uf177`  | `○` | draft |
-| merged | `\uf419`  | `◆` | merged |
-| closed | `\uf406`  | `×` | closed without merging |
+## Keys
 
-| Checks | Nerd Font | Plain | Meaning |
-| ------ | --------- | ----- | ------- |
-| pass    | `\U000f0134` | `✓` | checks passing |
-| fail    | `\U000f0159` | `×` | checks failing |
-| pending | `\U000f0520` | `◷` | checks still running |
+| Key | Action |
+| --- | ------ |
+| `↑`/`k`, `↓`/`j` | move between rows |
+| `g` / `G` | jump to the first / last row |
+| `enter`, `o` | open the selected ticket in a browser |
+| `p` | open the selected row's pull request |
+| `c` | copy a shareable snippet: title, ticket link, every PR link |
+| `s` | change the selected ticket's status |
+| `r` | refresh now |
+| `a` | pause or resume the automatic refresh |
+| `?` | keys, icons, and the issue types currently on screen |
+| `q`, `esc`, `ctrl+c` | quit |
 
-Pass `-no-nerd-font` to use the plain-Unicode column instead, for terminals
-without a patched font — otherwise every glyph draws as a blank box.
+Ticket keys and PR references are OSC 8 hyperlinks — ⌘-click them in iTerm2,
+Ghostty, WezTerm, Kitty or any terminal that supports links.
 
-The reference is also coloured by state (normal open, grey draft, violet merged,
-red closed), so the state still reads if a glyph cannot be drawn.
+## Reading a row
 
-Review is shown as a short badge rather than an icon, since workmux does not
-display one:
+```
+  ST    PROJ-475   Add account identifiers to each database   →   platform #1103 󰄴 rev✓   ♪
+  │  │  │          │                                              │          │  │       │
+  │  │  │          └ summary                                      │          │  │       └ Symphony
+  │  │  └ ticket key, linked to JIRA                              │          │  └ review
+  │  └ sub-tickets, blank when none                               │          └ checks
+  └ issue type                                                    └ pull request, linked
+```
 
-| Badge | Meaning |
-| ----- | ------- |
+**Issue type** is the initial of each word in the type's name: `Task` → `T`,
+`Sub-task` → `ST`, `New Feature` → `NF`. Nothing is hard-coded, so it works on any
+project's workflow. The `?` help lists the codes actually on screen, which is also
+where you can see if two types happen to share one.
+
+**Pull requests** show state, checks and review:
+
+| | Nerd Font | Plain | Meaning |
+| --- | --- | --- | --- |
+| state |  | `●` | open |
+| | | `○` | draft |
+| |  | `◆` | merged |
+| |  | `×` | closed without merging |
+| checks | `󰄴` | `✓` | passing |
+| | `󰅙` | `×` | failing |
+| | `󰔠` | `◷` | still running |
+
+The icons match [workmux](https://github.com/raine/workmux), so the two read the
+same way side by side. The reference is also coloured by state, so it still reads
+if a glyph cannot be drawn.
+
+| Review badge | Meaning |
+| --- | --- |
 | `rev✓` | approved; `rev✓3` means three approving reviews |
 | `rev±` | changes requested |
 | `rev?` | awaiting review |
 
-The approval badge comes from GitHub's review decision **and** the count of
-approving reviews. Both are needed: GitHub reports no decision at all when the
-base branch requires no review, so a genuinely approved PR would otherwise show
-nothing.
+Tickets are grouped by status, most urgent first, and each group is coloured.
 
-Merged has its own colour rather than sharing red with closed: a merged PR is a
-success and should not read as an alarm. Closed and merged outrank draft, so a
-draft that was closed shows as closed.
+## Changing a ticket's status
 
-## Symphony
-
-If a local [Symphony](https://github.com/openai/symphony) instance is running,
-the tickets it currently has in hand are marked in a column of their own:
+Press `s`. The choices come from JIRA's transitions API for that specific issue,
+so they are exactly what your workflow permits from its current state.
 
 ```
-  ST    PROJ-17538   Add account identifiers configured…  →  platform #1103 ci✓ rev✓   ♪
-  T     PROJ-17552   Mark the CI wait helper as manual-only       →  platform #1099 ci✓ rev?
-```
-
-The marker sits in its own column at the right-hand edge, after the pull request.
-
-| Marker | Meaning |
-| ------ | ------- |
-| `♪` | Symphony is working on the ticket |
-| `!` | paused waiting for operator input or approval |
-| `↻` | waiting for the next retry window |
-
-The column disappears entirely when Symphony has no sessions, so it costs nothing
-when you are not using it. Blocked has its own glyph rather than only a colour,
-because it is the state that needs *you*.
-
-### Discovery
-
-The instance is located from the `server` block of `WORKFLOW.md`'s YAML front
-matter, searching upward from the working directory:
-
-```yaml
----
-server:
-  port: 10000
----
-```
-
-`host` is honoured if present, defaulting to `127.0.0.1`. The port is read from
-the file rather than from `.symphony/symphony.pid`, because that PID file goes
-stale while the port stays authoritative — in this repo it pointed at a dead
-process while Symphony was alive on the configured port.
-
-Discovery and the API call are repeated on **every refresh**, since Symphony is
-started and stopped independently of this tool and its port travels with the
-working tree. It queries `GET /api/v1/state`.
-
-If Symphony is not running, or there is no `WORKFLOW.md`, nothing is shown and no
-error is reported — that is the ordinary case, and a banner would cry wolf on most
-refreshes.
-
-## Sharing a ticket or PR
-
-Press `c` to copy the selected row as text you can paste to whoever should look
-at it: what it is, then every link they need.
-
-```
-PROJ-17552 — Mark the CI wait helper as manual-only
-https://your-org.atlassian.net/browse/PROJ-17552
-https://github.com/acme/platform/pull/1099
-```
-
-There is no preamble, so it reads fine whether you are asking for a review or
-just pointing at something. The links are bare, which is what makes them unfurl
-when pasted into Slack.
-
-What lands on the clipboard follows the row:
-
-- a ticket with pull requests gets the ticket link and **every** PR link, not
-  just the first
-- a ticket with no PR gets only the ticket link, with no empty `PR:` line
-- a pull request with no ticket is labelled by repo and number, with no JIRA link
-
-Nothing that goes stale is included — no status, no CI state.
-
-Copying uses `pbcopy` on macOS, `wl-copy`/`xclip`/`xsel` on Linux and `clip` on
-Windows, falling back to the OSC 52 terminal escape when none is present, which
-is also what makes it work over SSH.
-
-## Changing status
-
-Press `s` on a ticket to move it. The choices come from JIRA's transitions API
-for that specific issue, so they are exactly what your workflow permits from its
-current state — and they differ per project (MOD offers 10, RED 14).
-
-```
-╭─ PROJ-17552 ───────────────────────────────────────────╮
-│ Mark the CI wait helper as manual-only             │
+╭─ PROJ-482 ────────────────────────────────────────────╮
+│ Mark the CI wait helper as manual-only                │
 │ now: Awaiting CR                                      │
 │                                                       │
 │ ▸ 1 To Do                                             │
@@ -258,78 +183,141 @@ current state — and they differ per project (MOD offers 10, RED 14).
 ╰───────────────────────────────────────────────────────╯
 ```
 
-Navigate with `↑↓`/`jk`, `⏎` to select, `1`–`9` to jump straight to a choice,
-`esc` to cancel, `o` to open the ticket in a browser. Auto-refresh pauses while
-the panel is open so rows cannot move under you.
+`1`–`9` jump straight to a choice. Two details that matter:
 
-Three details worth knowing:
+- **The destination status is shown, not the transition's name.** They differ more
+  often than you would expect — a transition called *Done* can move an issue to
+  *Awaiting Verification*. Where they differ, the transition's own name appears as
+  `via "Done"`.
+- **`+1 step`** marks a transition that needs a value first, such as a resolution
+  when closing. You get a second prompt listing the allowed values.
 
-- **The destination status is shown, not the transition's name.** They are not
-  always the same: in MOD, the transition called *Done* actually moves an issue
-  to *Awaiting Verification*, and in RED *COMMITTED* moves to *ROLL OUT*. Where
-  they differ the transition's own name is shown as `via "Done"`.
-- **`+1 step`** marks a transition that needs a value first. Closing a MOD issue
-  requires a resolution, so you get a second prompt listing the 12 allowed
-  resolutions.
-- **`(current)`** marks the transition that would land the issue back in the
-  status it is already in.
+Auto-refresh pauses while the panel is open, so rows cannot move under you.
 
-If a transition requires a field this tool cannot offer a list for — a free-text
-comment, say — it says so and points you at `o` to do it in the browser, rather
-than sending a request JIRA will reject.
+## Sharing
 
-## How tickets and PRs are matched
-
-A PR is attached to a ticket when a JIRA key (`PROJ-17506`, `TEAM-205732`) appears
-in its **title**, falling back to its **branch name**. PRs whose key matches no
-active ticket — or that have no key at all — are listed under *PRS WITHOUT AN
-ACTIVE TICKET* rather than hidden.
-
-## Repository scope
-
-Run from inside a repository and the PR list is narrowed to it. The header names
-that repository, hyperlinked, so a narrowed list is never mistaken for the whole
-picture. The link shortens to `owner/name` and then `name` on narrower
-terminals:
+Press `c` to copy the selected row as text you can paste to whoever should look at
+it:
 
 ```
-◈ DEVDASH  10 tickets · 3 PRs in https://github.com/acme/platform
+PROJ-482 — Mark the CI wait helper as manual-only
+https://your-org.atlassian.net/browse/PROJ-482
+https://github.com/acme/platform/pull/1099
 ```
 
-Outside a repository — or with `-all-repos` — every repo you have open PRs in is
-included and the header just reads `4 PRs`. An explicit `-pr-query` always wins
-over scoping, since narrowing a query you wrote yourself would silently change
-what you asked for.
+Bare URLs, so they unfurl in Slack. A ticket with several PRs contributes all of
+their links. Nothing that goes stale is included — no status, no CI state.
 
-The owner and name are read straight out of `.git/config` — no `git` subprocess —
-preferring `origin`, then `upstream`, then any remote, and following a worktree's
-`commondir` to the main repository's config.
+## Symphony (optional)
 
-That name is then confirmed against the API, because a renamed repository keeps
-its old URL in the remote and GitHub's search does **not** follow renames:
-searching `repo:acme/oldname` matches nothing even though that remote
-resolves fine. The REST endpoint answers `301` for a rename and Go follows it, so
-a stale remote still produces the name search will match. If that confirmation
-fails, scoping is skipped and every repository is shown — showing too much is the
-safer failure. Resolution happens once at startup, not per refresh.
+If a local [Symphony](https://github.com/openai/symphony) instance is running, the
+tickets it currently has in hand are marked in a column at the right-hand edge:
 
-## Archived repositories
+| Marker | Meaning |
+| --- | --- |
+| `♪` | Symphony is working on the ticket |
+| `!` | paused waiting for operator input or approval |
+| `↻` | waiting for the next retry window |
 
-Pull requests in archived repositories are hidden. GitHub keeps returning them
-from search indefinitely, but they cannot be merged, so they are noise on a
-devdash of live work — and worse, one can attach itself to a live ticket and
-make a stale PR look actionable.
+The instance is located from the `server` block of `WORKFLOW.md`'s front matter,
+searching upward from the working directory:
 
-Pass `-include-archived` to bring them back; they are then tagged `archived`.
+```yaml
+---
+server:
+  port: 10000
+---
+```
 
-## Notes
+Discovery and the query are repeated on every refresh, since Symphony starts and
+stops independently. If it is not running the column disappears entirely and
+nothing is reported — that is the ordinary case.
 
-- The two sources are fetched independently: if JIRA fails, your PRs still
-  render, and vice versa. Failures show as a banner and the last good data is
-  kept.
-- JIRA answers an unauthenticated search with `200` and an empty list, so an
-  expired token would otherwise look like an empty backlog. When the result is
-  empty the tool verifies identity via `/myself` and reports auth failures
-  explicitly.
-- The refresh interval is measured from the end of the previous fetch, so the
-  real cadence is the interval plus however long a fetch takes.
+## Reference
+
+| Flag | Environment | Default |
+| ---- | ----------- | ------- |
+| `-refresh` | `DEVDASH_REFRESH` | `10s`; `0` disables, minimum `2s` |
+| `-jql` | `DEVDASH_JQL` | assigned to you, not Done |
+| `-pr-query` | `DEVDASH_PR_QUERY` | open and recently merged, scoped to this repo |
+| `-all-repos` | — | scoped to the current repository |
+| `-include-archived` | — | archived-repo PRs hidden |
+| `-no-nerd-font` | — | Nerd Font glyphs |
+| `-no-links` | — | hyperlinks on |
+| `-once` | — | interactive |
+
+Scope it to a project or an organisation by overriding the queries:
+
+```bash
+devdash -jql 'assignee = currentUser() AND project = PROJ AND statusCategory != Done ORDER BY updated DESC'
+devdash -pr-query 'author:@me is:pr is:open org:your-org'
+```
+
+An explicit `-pr-query` is run exactly as written, with no repository scoping and
+no state filtering — ask for closed PRs and you get them.
+
+## How it works
+
+**Correlation.** A pull request attaches to a ticket when a JIRA key appears in its
+**title**, falling back to its **branch name**. PRs matching no active ticket are
+listed under their own heading rather than hidden, because they still need
+something from you.
+
+**Which PRs are fetched.** Open ones, plus any merged in the last 30 days —
+so a ticket still in review keeps showing the PR that did the work. Closed without
+merging is excluded as abandoned. A *merged* PR matching no active ticket is
+dropped rather than listed; it is finished work, and there can be hundreds.
+
+**Repository scope.** The owner and name are read from `.git/config` directly — no
+`git` subprocess — then confirmed against the API. That second step matters: a
+renamed repository keeps its old URL in the remote, and GitHub's search does not
+follow renames, so searching the stale name silently matches nothing.
+
+**Archived repositories** are skipped. GitHub keeps returning their PRs forever,
+but they cannot be merged. `-include-archived` brings them back.
+
+**No external binaries** are needed for data. JIRA and GitHub are called over
+HTTPS. `pbcopy`/`xclip` and `open`/`xdg-open` are used only for the clipboard and
+the browser, and only when you press `c` or `enter`.
+
+Nothing is written anywhere except the clipboard, and JIRA when you press `s`.
+
+## Troubleshooting
+
+**"0 tickets" or an authentication error.** Run `devdash help` and check the
+REQUIREMENTS table — it reports each variable as set or missing. Note that JIRA
+answers an unauthenticated search with `200` and an empty list, so devdash verifies
+your identity separately rather than reporting an empty backlog; an expired token
+shows as an explicit error.
+
+**Every icon is a blank box.** Your terminal font is not a Nerd Font. Run with
+`-no-nerd-font`, or install one.
+
+**A ticket shows `no PR` when you know there is one.** The key must appear in the
+PR's title or branch name. Check the spelling, and note that scoping to the current
+repository hides PRs in other repositories — try `-all-repos`.
+
+**No colour when piping.** Expected: colour is dropped when the output is not a
+terminal. `-once -no-links` gives clean text for scripts.
+
+## Contributing
+
+Issues and pull requests are welcome.
+
+```bash
+git clone https://github.com/tptodorov/devdash
+cd devdash
+go test ./...
+go build -o devdash .
+```
+
+One test suite talks to real JIRA and is skipped unless you point it at a ticket
+you do not mind moving. It transitions the ticket and moves it back:
+
+```bash
+DEVDASH_LIVE_TICKET=PROJ-482 go test -run TestLiveTransitionRoundTrip -v
+```
+
+## Licence
+
+[MIT](LICENSE)
