@@ -149,6 +149,12 @@ type transitionAppliedMsg struct {
 	err error
 }
 
+type scheduledMsg struct {
+	key     string
+	summary string // what changed, for the flash
+	err     error
+}
+
 type tickMsg time.Time
 
 func newApp(jql, ghQuery string, period time.Duration, hyperlinks, includeArchived bool) *app {
@@ -324,6 +330,14 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.setFlash(fmt.Sprintf("%s moved to %s", msg.key, msg.to))
 		return a, a.refresh()
 
+	case scheduledMsg:
+		if msg.err != nil {
+			a.setFlash("scheduling " + msg.key + " failed: " + msg.err.Error())
+			return a, nil
+		}
+		a.setFlash(msg.key + " scheduled for Symphony — " + msg.summary)
+		return a, a.refresh()
+
 	case ticketsMsg:
 		a.pendingJIRA = false
 		a.jiraErr = msg.err
@@ -388,6 +402,8 @@ func (a *app) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.copyRow()
 	case "s":
 		return a, a.openPicker()
+	case "S":
+		return a, a.scheduleForSymphony()
 	case "r":
 		return a, a.refresh()
 	case "a":
@@ -420,6 +436,68 @@ func childrenSearchURL(browseURL, key string) string {
 		return ""
 	}
 	return base + "/issues/?jql=" + url.QueryEscape("parent = "+key)
+}
+
+// scheduleForSymphony puts the selected ticket into the state Symphony picks up,
+// reading the conditions from WORKFLOW.md rather than assuming them.
+func (a *app) scheduleForSymphony() tea.Cmd {
+	row, ok := a.current()
+	if !ok {
+		return nil
+	}
+	if row.ticketKey == "" {
+		a.setFlash("that row is a pull request with no ticket — nothing to schedule")
+		return nil
+	}
+	if a.jira == nil {
+		a.setFlash("JIRA is not configured; cannot schedule")
+		return nil
+	}
+
+	ticket, found := a.ticketByKey(row.ticketKey)
+	if !found {
+		return nil
+	}
+
+	cwd, _ := os.Getwd()
+	cfg, err := readSymphonyConfig(cwd)
+	if err != nil {
+		a.setFlash("no Symphony configuration here: " + err.Error())
+		return nil
+	}
+
+	plan := planSchedule(cfg, ticket)
+	if plan.refusal != "" {
+		a.setFlash("cannot schedule: " + plan.refusal)
+		return nil
+	}
+	if plan.nothingToDo() {
+		a.setFlash(ticket.Key + " is already scheduled for Symphony")
+		return nil
+	}
+
+	jira := a.jira
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		if err := applySchedule(ctx, jira, plan); err != nil {
+			return scheduledMsg{key: plan.key, err: err}
+		}
+		return scheduledMsg{key: plan.key, summary: plan.summary()}
+	}
+}
+
+// ticketByKey finds a loaded ticket, which carries the labels and status the plan
+// is built from.
+func (a *app) ticketByKey(key string) (Ticket, bool) {
+	for _, g := range a.groups {
+		for _, t := range g.Tickets {
+			if strings.EqualFold(t.Key, key) {
+				return t, true
+			}
+		}
+	}
+	return Ticket{}, false
 }
 
 // copyRow puts the selected row's shareable snippet on the clipboard.

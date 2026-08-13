@@ -102,6 +102,7 @@ func writeHelp(w io.Writer) {
 		{"p", "open the selected row's pull request"},
 		{"c", "copy a shareable snippet: title, ticket link, every PR link"},
 		{"s", "change the selected ticket's status"},
+		{"S", "schedule the ticket for Symphony to pick up"},
 		{"r", "refresh now"},
 		{"a", "pause or resume the automatic refresh"},
 		{"?", "keys, columns and the issue types currently on screen"},
@@ -140,6 +141,14 @@ func writeHelp(w io.Writer) {
 		marker, style := symphonyMarker(s.state)
 		fmt.Fprintf(w, "  %s%s\n", style.Render(pad(marker, 22)), mutedStyle.Render(s.what))
 	}
+	prose(w, "")
+	prose(w, "Press S to schedule the selected ticket for Symphony. The conditions come")
+	prose(w, "from the tracker block of WORKFLOW.md, so nothing here is assumed: the ticket")
+	prose(w, "must belong to project_key, carry every required_label, and sit in one of")
+	prose(w, "active_states. S adds whatever is missing and reports what it changed.")
+	prose(w, "")
+	prose(w, "A ticket already in a terminal_state is refused rather than reopened, and so")
+	prose(w, "is one from another project.")
 	prose(w, "")
 	prose(w, "The instance is found from the server block of WORKFLOW.md's front matter,")
 	prose(w, "rediscovered and queried on every refresh, since Symphony starts and stops")

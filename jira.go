@@ -64,6 +64,15 @@ func (c *jiraClient) post(ctx context.Context, path string, payload any) ([]byte
 	return c.do(ctx, http.MethodPost, c.baseURL+path, body)
 }
 
+// put performs an authenticated PUT with a JSON body.
+func (c *jiraClient) put(ctx context.Context, path string, payload any) ([]byte, int, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, 0, err
+	}
+	return c.do(ctx, http.MethodPut, c.baseURL+path, body)
+}
+
 func (c *jiraClient) do(ctx context.Context, method, endpoint string, body []byte) ([]byte, int, error) {
 	var rdr io.Reader
 	if body != nil {
@@ -108,6 +117,7 @@ type jiraSearchResponse struct {
 				Name    string `json:"name"`
 				Subtask bool   `json:"subtask"`
 			} `json:"issuetype"`
+			Labels []string `json:"labels"`
 		} `json:"fields"`
 	} `json:"issues"`
 }
@@ -121,7 +131,7 @@ func (c *jiraClient) Tickets(ctx context.Context, jql string) ([]Ticket, error) 
 		q := url.Values{}
 		q.Set("jql", jql)
 		q.Set("maxResults", "100")
-		q.Set("fields", "key,summary,status,issuetype")
+		q.Set("fields", "key,summary,status,issuetype,labels")
 		if token != "" {
 			q.Set("nextPageToken", token)
 		}
@@ -145,6 +155,7 @@ func (c *jiraClient) Tickets(ctx context.Context, jql string) ([]Ticket, error) 
 				Status:    issue.Fields.Status.Name,
 				Category:  issue.Fields.Status.StatusCategory.Name,
 				Type:      issue.Fields.IssueType.Name,
+				Labels:    issue.Fields.Labels,
 				IsSubtask: issue.Fields.IssueType.Subtask,
 				URL:       c.baseURL + "/browse/" + issue.Key,
 			})
@@ -222,6 +233,31 @@ func (c *jiraClient) ChildCounts(ctx context.Context, candidates []string) (map[
 		}
 	}
 	return counts, nil
+}
+
+// AddLabels adds labels to an issue without touching any other field.
+func (c *jiraClient) AddLabels(ctx context.Context, key string, labels []string) error {
+	if len(labels) == 0 {
+		return nil
+	}
+	add := make([]map[string]string, 0, len(labels))
+	for _, l := range labels {
+		add = append(add, map[string]string{"add": l})
+	}
+	payload := map[string]any{"update": map[string]any{"labels": add}}
+
+	body, status, err := c.put(ctx, "/rest/api/3/issue/"+url.PathEscape(key), payload)
+	if err != nil {
+		return err
+	}
+	switch {
+	case status == http.StatusNoContent || status == http.StatusOK:
+		return nil
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return fmt.Errorf("not allowed to label %s (%d)", key, status)
+	default:
+		return fmt.Errorf("%s: %s", key, jiraErrorMessage(body, status))
+	}
 }
 
 // verifyAuth checks the credentials actually identify a user.

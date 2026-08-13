@@ -8,8 +8,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Symphony session states, in the order they appear in the API payload.
@@ -68,77 +69,94 @@ func findWorkflowFile(dir string) (string, error) {
 	}
 }
 
-// symphonyServer reads host and port out of the server block. The front matter is
-// simple enough that scanning it beats taking on a YAML dependency, but the scan
-// has to be section-aware: WORKFLOW.md also carries polling.interval_ms and
-// hooks.timeout_ms, and a naive search for a port would be free to wander.
-func symphonyServer(path string) (host string, port int, err error) {
+// symphonyConfig is the part of WORKFLOW.md's front matter that decides which
+// tickets Symphony will pick up, and where its server listens.
+type symphonyConfig struct {
+	Tracker struct {
+		Provider struct {
+			ProjectKey string `yaml:"project_key"`
+		} `yaml:"provider"`
+		RequiredLabels []string `yaml:"required_labels"`
+		ActiveStates   []string `yaml:"active_states"`
+		TerminalStates []string `yaml:"terminal_states"`
+	} `yaml:"tracker"`
+	Server struct {
+		Host string `yaml:"host"`
+		Port int    `yaml:"port"`
+	} `yaml:"server"`
+}
+
+// frontMatter returns the YAML block delimited by --- at the top of a file.
+func frontMatter(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", 0, err
+		return nil, err
 	}
 	defer f.Close()
 
-	host = symphonyDefaultHost
-	section := ""
-	inFrontMatter := false
-	seenDelimiter := false
-
+	var block []string
+	inside, seen := false, false
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		raw := scanner.Text()
-		trimmed := strings.TrimSpace(raw)
-
-		if trimmed == "---" {
-			if !seenDelimiter {
-				seenDelimiter, inFrontMatter = true, true
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "---" {
+			if !seen {
+				seen, inside = true, true
 				continue
 			}
-			break // end of front matter
+			break
 		}
-		if !inFrontMatter || trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-
-		// A key at column zero opens a new section.
-		if raw == trimmed {
-			section = strings.TrimSuffix(trimmed, ":")
-			continue
-		}
-		if section != "server" {
-			continue
-		}
-
-		key, value, found := strings.Cut(trimmed, ":")
-		if !found {
-			continue
-		}
-		value = strings.TrimSpace(value)
-		value = strings.Trim(value, `"'`)
-
-		switch strings.TrimSpace(key) {
-		case "port":
-			// Only the port directly under server:, not one nested deeper.
-			if n, convErr := strconv.Atoi(value); convErr == nil && indentOf(raw) <= 2 {
-				port = n
-			}
-		case "host":
-			if value != "" && indentOf(raw) <= 2 {
-				host = value
-			}
+		if inside {
+			block = append(block, line)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return "", 0, err
+		return nil, err
 	}
-	if port == 0 {
-		return "", 0, fmt.Errorf("no server.port in %s", filepath.Base(path))
+	if !seen {
+		return nil, fmt.Errorf("%s has no YAML front matter", filepath.Base(path))
 	}
-	return host, port, nil
+	return []byte(strings.Join(block, "\n")), nil
 }
 
-func indentOf(line string) int {
-	return len(line) - len(strings.TrimLeft(line, " \t"))
+// readSymphonyConfig parses the front matter of the WORKFLOW.md governing dir.
+func readSymphonyConfig(dir string) (symphonyConfig, error) {
+	var cfg symphonyConfig
+
+	path, err := findWorkflowFile(dir)
+	if err != nil {
+		return cfg, err
+	}
+	raw, err := frontMatter(path)
+	if err != nil {
+		return cfg, err
+	}
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		return cfg, fmt.Errorf("parsing %s front matter: %w", filepath.Base(path), err)
+	}
+	return cfg, nil
+}
+
+// symphonyServer reports where the Symphony server for this tree listens. The
+// port comes from the file rather than from the PID file Symphony leaves behind,
+// which goes stale while the port stays authoritative.
+func symphonyServer(path string) (host string, port int, err error) {
+	raw, err := frontMatter(path)
+	if err != nil {
+		return "", 0, err
+	}
+	var cfg symphonyConfig
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		return "", 0, fmt.Errorf("parsing %s front matter: %w", filepath.Base(path), err)
+	}
+	if cfg.Server.Port == 0 {
+		return "", 0, fmt.Errorf("no server.port in %s", filepath.Base(path))
+	}
+	host = cfg.Server.Host
+	if host == "" {
+		host = symphonyDefaultHost
+	}
+	return host, cfg.Server.Port, nil
 }
 
 type symphonySession struct {

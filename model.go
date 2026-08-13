@@ -15,6 +15,7 @@ type Ticket struct {
 	Category string // JIRA status category: "In Progress", "To Do", "Done"
 	Type     string // the project's own issue type name, whatever it is
 	URL      string
+	Labels   []string
 	// IsSubtask comes from JIRA's own issuetype.subtask flag rather than the
 	// type's name, so it holds for any project's naming.
 	IsSubtask  bool
