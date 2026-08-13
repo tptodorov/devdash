@@ -59,6 +59,80 @@ func symphonyMarker(state string) (string, lipgloss.Style) {
 	}
 }
 
+// Pull request icons, matching workmux (github.com/raine/workmux) so the two
+// tools read the same way side by side. Nerd Font glyphs are used by default,
+// with the plain-Unicode set workmux falls back to when nerd fonts are off.
+//
+// The codepoints are workmux's own, including the older Octicon positions for
+// draft and closed.
+var (
+	useNerdFont = true
+
+	nerdPRIcons = prIconSet{
+		draft:  "", // nf-oct-git_pull_request_draft
+		open:   "", // nf-oct-git_pull_request
+		merged: "", // nf-oct-git_merge
+		closed: "", // nf-oct-git_pull_request_closed
+	}
+	fallbackPRIcons = prIconSet{draft: "○", open: "●", merged: "◆", closed: "×"}
+
+	nerdCheckIcons = checkIconSet{
+		success: "\U000f0134", // nf-md-check_circle
+		failure: "\U000f0159", // nf-md-close_circle
+		pending: "\U000f0520", // nf-md-timer_sand
+	}
+	fallbackCheckIcons = checkIconSet{success: "✓", failure: "×", pending: "◷"}
+)
+
+type prIconSet struct{ draft, open, merged, closed string }
+type checkIconSet struct{ success, failure, pending string }
+
+func prIcons() prIconSet {
+	if useNerdFont {
+		return nerdPRIcons
+	}
+	return fallbackPRIcons
+}
+
+func checkIcons() checkIconSet {
+	if useNerdFont {
+		return nerdCheckIcons
+	}
+	return fallbackCheckIcons
+}
+
+// prStateIcon is the glyph and colour for what the pull request is. Closed and
+// merged outrank draft, because a draft that was closed is closed.
+func prStateIcon(pr PullRequest) (string, lipgloss.Style) {
+	icons := prIcons()
+	switch {
+	case pr.State == "MERGED":
+		return icons.merged, mergedStyle
+	case pr.State == "CLOSED":
+		return icons.closed, badStyle
+	case pr.Draft:
+		return icons.draft, faintStyle
+	default:
+		return icons.open, normalStyle
+	}
+}
+
+// prCheckIcon is the glyph and colour for the CI rollup of the head commit. An
+// empty string means nothing is reported, so nothing is drawn.
+func prCheckIcon(pr PullRequest) (string, lipgloss.Style) {
+	icons := checkIcons()
+	switch pr.CI {
+	case "SUCCESS":
+		return icons.success, okStyle
+	case "FAILURE", "ERROR":
+		return icons.failure, badStyle
+	case "PENDING", "EXPECTED":
+		return icons.pending, warnStyle
+	default:
+		return "", faintStyle
+	}
+}
+
 // prStateStyle colours a pull request reference by its state: normal for open,
 // grey for a draft, red for closed, violet for merged. Closed and merged outrank
 // draft, because a draft that was closed is closed.

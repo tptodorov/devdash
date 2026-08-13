@@ -37,6 +37,8 @@ func main() {
 		"render plain text instead of OSC 8 terminal hyperlinks")
 	once := flag.Bool("once", false,
 		"print a single snapshot and exit instead of running the interactive UI")
+	noNerdFont := flag.Bool("no-nerd-font", false,
+		"use plain Unicode instead of Nerd Font glyphs for pull request icons")
 	includeArchived := flag.Bool("include-archived", false,
 		"keep pull requests whose repository is archived (hidden by default)")
 
@@ -60,6 +62,7 @@ func main() {
 	if interval > 0 && interval < minRefresh {
 		interval = minRefresh
 	}
+	useNerdFont = !*noNerdFont
 
 	a := newApp(*jql, "", interval, !*noLinks, *includeArchived)
 

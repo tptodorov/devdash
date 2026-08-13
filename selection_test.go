@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
 )
 
@@ -178,12 +179,12 @@ func TestPRBadges(t *testing.T) {
 		want    string
 		notWant string
 	}{
-		{name: "checks passing", pr: PullRequest{CI: "SUCCESS"}, want: "ci✓"},
-		{name: "checks failing", pr: PullRequest{CI: "FAILURE"}, want: "ci✗"},
-		{name: "checks errored counts as failing", pr: PullRequest{CI: "ERROR"}, want: "ci✗"},
-		{name: "checks running", pr: PullRequest{CI: "PENDING"}, want: "ci◌"},
-		{name: "checks expected counts as running", pr: PullRequest{CI: "EXPECTED"}, want: "ci◌"},
-		{name: "no checks reported", pr: PullRequest{}, notWant: "ci"},
+		{name: "checks passing", pr: PullRequest{CI: "SUCCESS"}, want: nerdCheckIcons.success},
+		{name: "checks failing", pr: PullRequest{CI: "FAILURE"}, want: nerdCheckIcons.failure},
+		{name: "checks errored counts as failing", pr: PullRequest{CI: "ERROR"}, want: nerdCheckIcons.failure},
+		{name: "checks running", pr: PullRequest{CI: "PENDING"}, want: nerdCheckIcons.pending},
+		{name: "checks expected counts as running", pr: PullRequest{CI: "EXPECTED"}, want: nerdCheckIcons.pending},
+		{name: "no checks reported", pr: PullRequest{}, notWant: nerdCheckIcons.success},
 
 		{name: "approved", pr: PullRequest{Review: "APPROVED"}, want: "rev✓"},
 		{name: "changes requested", pr: PullRequest{Review: "CHANGES_REQUESTED"}, want: "rev±"},
@@ -226,6 +227,83 @@ func TestPRBadges(t *testing.T) {
 				t.Errorf("prSegs = %q, want %q absent", got, tc.notWant)
 			}
 		})
+	}
+}
+
+// The cell leads with the state icon, as workmux does: <state> repo #n <checks>.
+func TestPRStateIconLeadsTheCell(t *testing.T) {
+	tests := []struct {
+		name string
+		pr   PullRequest
+		want string
+	}{
+		{"open", PullRequest{State: "OPEN"}, nerdPRIcons.open},
+		{"draft", PullRequest{State: "OPEN", Draft: true}, nerdPRIcons.draft},
+		{"merged", PullRequest{State: "MERGED"}, nerdPRIcons.merged},
+		{"closed", PullRequest{State: "CLOSED"}, nerdPRIcons.closed},
+		{"closed draft reads as closed", PullRequest{State: "CLOSED", Draft: true}, nerdPRIcons.closed},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := tc.pr
+			pr.Repo, pr.Number, pr.CI = "repo", 1, "SUCCESS"
+
+			var plain strings.Builder
+			for _, s := range prSegs(pr, 34) {
+				plain.WriteString(s.text)
+			}
+			got := plain.String()
+
+			if !strings.HasPrefix(got, tc.want+" ") {
+				t.Errorf("prSegs = %q, want it to start with %q", got, tc.want)
+			}
+			// The check icon trails the reference, not the other way round.
+			if strings.Index(got, nerdCheckIcons.success) < strings.Index(got, "repo #1") {
+				t.Errorf("check icon should follow the reference: %q", got)
+			}
+		})
+	}
+
+	// Every icon must be one display column, or every row shifts.
+	for name, g := range map[string]string{
+		"open": nerdPRIcons.open, "draft": nerdPRIcons.draft,
+		"merged": nerdPRIcons.merged, "closed": nerdPRIcons.closed,
+		"success": nerdCheckIcons.success, "failure": nerdCheckIcons.failure,
+		"pending": nerdCheckIcons.pending,
+		"fb-open": fallbackPRIcons.open, "fb-draft": fallbackPRIcons.draft,
+		"fb-merged": fallbackPRIcons.merged, "fb-closed": fallbackPRIcons.closed,
+		"fb-success": fallbackCheckIcons.success, "fb-failure": fallbackCheckIcons.failure,
+		"fb-pending": fallbackCheckIcons.pending,
+	} {
+		if w := runewidth.StringWidth(g); w != 1 {
+			t.Errorf("%s icon %q is %d columns, want 1", name, g, w)
+		}
+	}
+}
+
+// With nerd fonts off, the plain-Unicode set is used instead. Terminals without
+// a patched font would otherwise draw every icon as a blank box.
+func TestFallbackIconsWhenNerdFontDisabled(t *testing.T) {
+	useNerdFont = false
+	t.Cleanup(func() { useNerdFont = true })
+
+	var plain strings.Builder
+	for _, s := range prSegs(PullRequest{Repo: "repo", Number: 1, State: "MERGED", CI: "FAILURE"}, 34) {
+		plain.WriteString(s.text)
+	}
+	got := plain.String()
+
+	if !strings.Contains(got, fallbackPRIcons.merged) {
+		t.Errorf("prSegs = %q, want the fallback merged icon %q", got, fallbackPRIcons.merged)
+	}
+	if !strings.Contains(got, fallbackCheckIcons.failure) {
+		t.Errorf("prSegs = %q, want the fallback failure icon %q", got, fallbackCheckIcons.failure)
+	}
+	// No private-use codepoints may survive with nerd fonts off.
+	for _, r := range got {
+		if r >= 0xE000 && r <= 0xF8FF || r >= 0xF0000 {
+			t.Errorf("prSegs = %q, contains private-use rune U+%04X", got, r)
+		}
 	}
 }
 

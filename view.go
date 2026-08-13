@@ -141,13 +141,8 @@ func prSegs(pr PullRequest, w int) []seg {
 	if pr.Archived {
 		badges = append(badges, seg{text: " archived", st: warnStyle})
 	}
-	switch pr.CI {
-	case "SUCCESS":
-		badges = append(badges, seg{text: " ci✓", st: okStyle})
-	case "FAILURE", "ERROR":
-		badges = append(badges, seg{text: " ci✗", st: badStyle})
-	case "PENDING", "EXPECTED":
-		badges = append(badges, seg{text: " ci◌", st: warnStyle})
+	if icon, style := prCheckIcon(pr); icon != "" {
+		badges = append(badges, seg{text: " " + icon, st: style})
 	}
 	// The approval state. GitHub reports no decision at all when the base branch
 	// requires no review, so an approving review has to be counted separately or
@@ -165,14 +160,20 @@ func prSegs(pr PullRequest, w int) []seg {
 		badges = append(badges, seg{text: " rev?", st: warnStyle})
 	}
 
-	labelBudget := w - segsWidth(badges)
+	// The state icon leads, as in workmux: <state> repo #number <checks>.
+	stateIcon, stateStyle := prStateIcon(pr)
+	lead := []seg{{text: stateIcon + " ", st: stateStyle}}
+
+	labelBudget := w - segsWidth(badges) - segsWidth(lead)
 	if labelBudget < 6 {
 		labelBudget = 6
 	}
 	// The reference also carries the state in its colour, so the state reads even
 	// where the glyph cannot be drawn.
 	label := trunc(fmt.Sprintf("%s #%d", pr.Repo, pr.Number), labelBudget)
-	return append([]seg{{text: label, st: prStateStyle(pr), link: pr.URL}}, badges...)
+
+	segs := append(lead, seg{text: label, st: prStateStyle(pr), link: pr.URL})
+	return append(segs, badges...)
 }
 
 // buildBody renders the dashboard rows and reports, for each selectable row,
@@ -506,7 +507,10 @@ func (a *app) helpView(lay layout) []string {
 
 	out = append(out, "", groupHeader("LEGEND", "", 0, lay.width))
 	legend := [][2]string{
-		{"ci✓ ci✗ ci◌", "checks passing · failing · running"},
+		{checkIcons().success + " " + checkIcons().failure + " " + checkIcons().pending,
+			"checks passing · failing · running"},
+		{prIcons().open + " " + prIcons().draft + " " + prIcons().merged + " " + prIcons().closed,
+			"open · draft · merged · closed"},
 		{"rev✓ rev± rev?", "approved (rev✓N = N approvals) · changes requested · awaiting"},
 		{"archived", "the PR's repository is archived"},
 		{"→  ·", "ticket has a pull request · has none"},

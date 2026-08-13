@@ -119,59 +119,48 @@ devdash -jql 'assignee = currentUser() AND project = MOD AND statusCategory != D
 devdash -pr-query 'author:@me is:pr is:open org:acme'
 ```
 
-## Pull request badges
+## Pull request icons
 
-Each pull request shows GitHub's own status, shortened:
+Each pull request is shown as `<state> repo #number <checks>`, using the same
+Nerd Font glyphs as [workmux](https://github.com/raine/workmux) so the two read
+the same way side by side:
+
+| State | Nerd Font | Plain | Meaning |
+| ----- | --------- | ----- | ------- |
+| open   | `\uf407`  | `●` | open |
+| draft  | `\uf177`  | `○` | draft |
+| merged | `\uf419`  | `◆` | merged |
+| closed | `\uf406`  | `×` | closed without merging |
+
+| Checks | Nerd Font | Plain | Meaning |
+| ------ | --------- | ----- | ------- |
+| pass    | `\U000f0134` | `✓` | checks passing |
+| fail    | `\U000f0159` | `×` | checks failing |
+| pending | `\U000f0520` | `◷` | checks still running |
+
+Pass `-no-nerd-font` to use the plain-Unicode column instead, for terminals
+without a patched font — otherwise every glyph draws as a blank box.
+
+The reference is also coloured by state (normal open, grey draft, violet merged,
+red closed), so the state still reads if a glyph cannot be drawn.
+
+Review is shown as a short badge rather than an icon, since workmux does not
+display one:
 
 | Badge | Meaning |
 | ----- | ------- |
-| `ci✓` | checks passing |
-| `ci✗` | checks failing |
-| `ci◌` | checks still running |
 | `rev✓` | approved; `rev✓3` means three approving reviews |
 | `rev±` | changes requested |
 | `rev?` | awaiting review |
-| `archived` | the PR's repository is archived (only with `-include-archived`) |
 
 The approval badge comes from GitHub's review decision **and** the count of
 approving reviews. Both are needed: GitHub reports no decision at all when the
 base branch requires no review, so a genuinely approved PR would otherwise show
 nothing.
 
-The PR's own state is carried by the colour of its reference:
-
-| Colour | State |
-| ------ | ----- |
-| normal text | open |
-| grey | draft |
-| violet | merged |
-| red | closed without merging |
-
 Merged has its own colour rather than sharing red with closed: a merged PR is a
 success and should not read as an alarm. Closed and merged outrank draft, so a
 draft that was closed shows as closed.
-
-### Which pull requests are fetched
-
-Open pull requests, plus any merged in the last 30 days. **Closed without
-merging is excluded** — that is abandoned work, not something a dashboard of live
-work should carry.
-
-Merged PRs are fetched so a ticket that is still open keeps showing the PR that
-did the work: `PROJ-17506` was `In Review` while its `#1105` had already merged,
-and without this it showed `no PR`.
-
-A merged PR matching no active ticket is dropped rather than listed. It is
-finished work, and there are hundreds of them — listing them would bury the open
-PRs that still need attention. Open PRs with no ticket are always listed, since
-they still need something from you.
-
-GitHub has no qualifier for "open or merged": `is:open` and `is:merged` are
-disjoint, and `-is:unmerged` excludes open entirely. So two searches are used,
-travelling in a single GraphQL request.
-
-An explicit `-pr-query` is honoured exactly as written, with no second search and
-no state filtering — ask for closed PRs and you get them.
 
 ## Symphony
 
