@@ -120,7 +120,7 @@ devdash -all-repos      # ignore the current repository, show everything
 | `p` | open the selected row's pull request |
 | `c` | copy a shareable snippet: title, ticket link, every PR link |
 | `s` | change the selected ticket's status |
-| `S` | schedule the ticket for Symphony to pick up |
+| `S` | schedule the ticket for Symphony, or unschedule it if queued |
 | `r` | refresh now |
 | `a` | pause or resume the automatic refresh |
 | `?` | keys, icons, and the issue types currently on screen |

@@ -33,15 +33,19 @@ func TestDryRunSchedulePlans(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tickets: %v", err)
 	}
+	// Live sessions decide whether a scheduled ticket can be taken back.
+	applySymphony(tickets, symphonyLookup(ctx, dir))
 	for _, tk := range tickets {
-		p := planSchedule(cfg, tk)
+		p := planToggle(cfg, tk)
 		switch {
 		case p.refusal != "":
-			t.Logf("  %-11s %-14s REFUSE  %s", tk.Key, tk.Status, p.refusal)
+			t.Logf("  %-11s %-14s REFUSE      %s", tk.Key, tk.Status, p.refusal)
 		case p.nothingToDo():
-			t.Logf("  %-11s %-14s ready   already scheduled", tk.Key, tk.Status)
+			t.Logf("  %-11s %-14s NOTHING", tk.Key, tk.Status)
+		case p.unschedule:
+			t.Logf("  %-11s %-14s UNSCHEDULE  %s", tk.Key, tk.Status, p.summary())
 		default:
-			t.Logf("  %-11s %-14s WOULD   %s", tk.Key, tk.Status, p.summary())
+			t.Logf("  %-11s %-14s SCHEDULE    %s", tk.Key, tk.Status, p.summary())
 		}
 	}
 }

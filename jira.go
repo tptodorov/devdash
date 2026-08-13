@@ -235,16 +235,20 @@ func (c *jiraClient) ChildCounts(ctx context.Context, candidates []string) (map[
 	return counts, nil
 }
 
-// AddLabels adds labels to an issue without touching any other field.
-func (c *jiraClient) AddLabels(ctx context.Context, key string, labels []string) error {
-	if len(labels) == 0 {
+// UpdateLabels adds and removes labels on an issue without touching any other
+// field, in a single request so the two never half-apply.
+func (c *jiraClient) UpdateLabels(ctx context.Context, key string, add, remove []string) error {
+	if len(add) == 0 && len(remove) == 0 {
 		return nil
 	}
-	add := make([]map[string]string, 0, len(labels))
-	for _, l := range labels {
-		add = append(add, map[string]string{"add": l})
+	ops := make([]map[string]string, 0, len(add)+len(remove))
+	for _, l := range add {
+		ops = append(ops, map[string]string{"add": l})
 	}
-	payload := map[string]any{"update": map[string]any{"labels": add}}
+	for _, l := range remove {
+		ops = append(ops, map[string]string{"remove": l})
+	}
+	payload := map[string]any{"update": map[string]any{"labels": ops}}
 
 	body, status, err := c.put(ctx, "/rest/api/3/issue/"+url.PathEscape(key), payload)
 	if err != nil {
@@ -254,7 +258,7 @@ func (c *jiraClient) AddLabels(ctx context.Context, key string, labels []string)
 	case status == http.StatusNoContent || status == http.StatusOK:
 		return nil
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		return fmt.Errorf("not allowed to label %s (%d)", key, status)
+		return fmt.Errorf("not allowed to relabel %s (%d)", key, status)
 	default:
 		return fmt.Errorf("%s: %s", key, jiraErrorMessage(body, status))
 	}

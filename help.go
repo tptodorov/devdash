@@ -102,7 +102,7 @@ func writeHelp(w io.Writer) {
 		{"p", "open the selected row's pull request"},
 		{"c", "copy a shareable snippet: title, ticket link, every PR link"},
 		{"s", "change the selected ticket's status"},
-		{"S", "schedule the ticket for Symphony to pick up"},
+		{"S", "schedule the ticket for Symphony, or unschedule it if queued"},
 		{"r", "refresh now"},
 		{"a", "pause or resume the automatic refresh"},
 		{"?", "keys, columns and the issue types currently on screen"},
@@ -144,13 +144,17 @@ func writeHelp(w io.Writer) {
 		fmt.Fprintf(w, "  %s%s\n", style.Render(pad(marker, 22)), mutedStyle.Render(s.what))
 	}
 	prose(w, "")
-	prose(w, "Press S to schedule the selected ticket for Symphony. The conditions come")
-	prose(w, "from the tracker block of WORKFLOW.md, so nothing here is assumed: the ticket")
-	prose(w, "must belong to project_key, carry every required_label, and sit in one of")
-	prose(w, "active_states. S adds whatever is missing and reports what it changed.")
+	prose(w, "S toggles the selected ticket in and out of Symphony's queue. The conditions")
+	prose(w, "come from the tracker block of WORKFLOW.md, so nothing here is assumed: the")
+	prose(w, "ticket must belong to project_key, carry every required_label, and sit in one")
+	prose(w, "of active_states.")
 	prose(w, "")
-	prose(w, "A ticket already in a terminal_state is refused rather than reopened, and so")
-	prose(w, "is one from another project.")
+	prose(w, "On a ticket Symphony would not pick up, S adds whatever is missing. On one it")
+	prose(w, "already would, S removes the required labels again, leaving the status alone.")
+	prose(w, "")
+	prose(w, "Refused rather than done: a ticket in a terminal_state, one from another")
+	prose(w, "project, and unscheduling one Symphony already holds a session for — the")
+	prose(w, "label would come off without the work stopping.")
 	prose(w, "")
 	prose(w, "The instance is found from the server block of WORKFLOW.md's front matter,")
 	prose(w, "rediscovered and queried on every refresh, since Symphony starts and stops")

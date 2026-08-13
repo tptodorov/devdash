@@ -219,3 +219,211 @@ server:
 		t.Errorf("plan from file = %+v", plan)
 	}
 }
+
+// S is a toggle: a ticket Symphony would already pick up comes back out of the
+// queue, anything else goes in.
+func TestPlanToggle(t *testing.T) {
+	cfg := testConfig()
+
+	tests := []struct {
+		name         string
+		ticket       Ticket
+		wantUnsched  bool
+		wantRemove   []string
+		wantAdd      []string
+		wantToStatus string
+		wantRefusal  string
+	}{
+		{
+			// Eligible, so the toggle takes it out.
+			name:        "eligible ticket is unscheduled",
+			ticket:      Ticket{Key: "PROJ-1", Status: "In Progress", Labels: []string{"symphony-ready"}},
+			wantUnsched: true,
+			wantRemove:  []string{"symphony-ready"},
+		},
+		{
+			// Only the label is missing, so it goes in.
+			name:    "unlabelled active ticket is scheduled",
+			ticket:  Ticket{Key: "PROJ-2", Status: "To Do"},
+			wantAdd: []string{"symphony-ready"},
+		},
+		{
+			// Labelled but parked: not eligible, so the toggle schedules it
+			// rather than stripping the label it already has.
+			name:         "labelled but inactive ticket is scheduled, not unscheduled",
+			ticket:       Ticket{Key: "PROJ-3", Status: "Awaiting CR", Labels: []string{"symphony-ready"}},
+			wantToStatus: "To Do",
+		},
+		{
+			name:        "another project is refused either way",
+			ticket:      Ticket{Key: "TEAM-4", Status: "To Do", Labels: []string{"symphony-ready"}},
+			wantRefusal: "only watches project PROJ",
+		},
+		{
+			name:        "terminal ticket is still refused",
+			ticket:      Ticket{Key: "PROJ-5", Status: "Done", Labels: []string{"symphony-ready"}},
+			wantRefusal: "finished",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := planToggle(cfg, tc.ticket)
+
+			if tc.wantRefusal != "" {
+				if !strings.Contains(plan.refusal, tc.wantRefusal) {
+					t.Fatalf("refusal = %q, want it to mention %q", plan.refusal, tc.wantRefusal)
+				}
+				return
+			}
+			if plan.refusal != "" {
+				t.Fatalf("unexpected refusal: %q", plan.refusal)
+			}
+			if plan.unschedule != tc.wantUnsched {
+				t.Errorf("unschedule = %v, want %v", plan.unschedule, tc.wantUnsched)
+			}
+			if strings.Join(plan.removeLabels, ",") != strings.Join(tc.wantRemove, ",") {
+				t.Errorf("removeLabels = %v, want %v", plan.removeLabels, tc.wantRemove)
+			}
+			if strings.Join(plan.addLabels, ",") != strings.Join(tc.wantAdd, ",") {
+				t.Errorf("addLabels = %v, want %v", plan.addLabels, tc.wantAdd)
+			}
+			if plan.toStatus != tc.wantToStatus {
+				t.Errorf("toStatus = %q, want %q", plan.toStatus, tc.wantToStatus)
+			}
+			// Unscheduling never moves the ticket: undoing the status change would
+			// mean guessing where it came from.
+			if plan.unschedule && plan.toStatus != "" {
+				t.Errorf("unscheduling should not move the ticket, got %q", plan.toStatus)
+			}
+		})
+	}
+}
+
+// Toggling twice returns the ticket to where it started, which is what makes it a
+// toggle rather than two unrelated commands.
+func TestToggleRoundTrips(t *testing.T) {
+	cfg := testConfig()
+	ticket := Ticket{Key: "PROJ-1", Status: "To Do"} // active, unlabelled
+
+	out := planToggle(cfg, ticket)
+	if out.unschedule || strings.Join(out.addLabels, ",") != "symphony-ready" {
+		t.Fatalf("first toggle = %+v, want it to add the label", out)
+	}
+	// Apply it by hand: the label is now present.
+	ticket.Labels = append(ticket.Labels, out.addLabels...)
+	if !scheduled(cfg, ticket) {
+		t.Fatal("ticket should be scheduled after the first toggle")
+	}
+
+	back := planToggle(cfg, ticket)
+	if !back.unschedule || strings.Join(back.removeLabels, ",") != "symphony-ready" {
+		t.Fatalf("second toggle = %+v, want it to remove the label", back)
+	}
+	// And applying that leaves the original ticket.
+	ticket.Labels = nil
+	if scheduled(cfg, ticket) {
+		t.Error("ticket should not be scheduled after toggling back")
+	}
+}
+
+// Unrelated labels must survive a toggle in both directions.
+func TestToggleLeavesOtherLabelsAlone(t *testing.T) {
+	cfg := testConfig()
+	ticket := Ticket{
+		Key: "PROJ-1", Status: "To Do",
+		Labels: []string{"tech-debt", "symphony-ready", "ram"},
+	}
+
+	plan := planToggle(cfg, ticket)
+	if !plan.unschedule {
+		t.Fatal("expected an unschedule")
+	}
+	if strings.Join(plan.removeLabels, ",") != "symphony-ready" {
+		t.Errorf("removeLabels = %v, want only the required label", plan.removeLabels)
+	}
+}
+
+func TestScheduledPredicate(t *testing.T) {
+	cfg := testConfig()
+	tests := []struct {
+		ticket Ticket
+		want   bool
+	}{
+		{Ticket{Status: "To Do", Labels: []string{"symphony-ready"}}, true},
+		{Ticket{Status: "In Progress", Labels: []string{"symphony-ready"}}, true},
+		{Ticket{Status: "to do", Labels: []string{"Symphony-Ready"}}, true}, // case-insensitive
+		{Ticket{Status: "To Do"}, false},                                    // no label
+		{Ticket{Status: "Awaiting CR", Labels: []string{"symphony-ready"}}, false},
+		{Ticket{Status: "Done", Labels: []string{"symphony-ready"}}, false},
+	}
+	for _, tc := range tests {
+		if got := scheduled(cfg, tc.ticket); got != tc.want {
+			t.Errorf("scheduled(%q, %v) = %v, want %v",
+				tc.ticket.Status, tc.ticket.Labels, got, tc.want)
+		}
+	}
+}
+
+// A ticket Symphony already holds cannot be taken back out: removing the label
+// would not stop the work, it would only make the dashboard disagree with it.
+func TestCannotUnscheduleWhileSymphonyHasIt(t *testing.T) {
+	cfg := testConfig()
+	base := Ticket{Key: "PROJ-1", Status: "In Progress", Labels: []string{"symphony-ready"}}
+
+	for _, live := range []string{SymphonyRunning, SymphonyBlocked, SymphonyRetrying} {
+		t.Run(live, func(t *testing.T) {
+			ticket := base
+			ticket.Symphony = live
+
+			plan := planToggle(cfg, ticket)
+			if plan.refusal == "" {
+				t.Fatalf("expected a refusal while %s, got %+v", live, plan)
+			}
+			if !strings.Contains(plan.refusal, live) {
+				t.Errorf("refusal = %q, want it to name the state", plan.refusal)
+			}
+			// Nothing may be proposed alongside the refusal.
+			if len(plan.removeLabels) > 0 || len(plan.addLabels) > 0 || plan.toStatus != "" {
+				t.Errorf("refused plan still proposes changes: %+v", plan)
+			}
+		})
+	}
+
+	// Scheduled but not picked up: this is exactly the case that can be undone.
+	t.Run("scheduled is still reversible", func(t *testing.T) {
+		ticket := base
+		ticket.Symphony = SymphonyScheduled
+
+		plan := planToggle(cfg, ticket)
+		if plan.refusal != "" {
+			t.Fatalf("unexpected refusal: %q", plan.refusal)
+		}
+		if !plan.unschedule || strings.Join(plan.removeLabels, ",") != "symphony-ready" {
+			t.Errorf("plan = %+v, want it to remove the label", plan)
+		}
+	})
+
+	// No marker at all, e.g. Symphony is not running: still reversible.
+	t.Run("no session is reversible", func(t *testing.T) {
+		plan := planToggle(cfg, base)
+		if plan.refusal != "" || !plan.unschedule {
+			t.Errorf("plan = %+v, want an unschedule", plan)
+		}
+	})
+}
+
+func TestSymphonyHasIt(t *testing.T) {
+	tests := map[string]bool{
+		SymphonyRunning:   true,
+		SymphonyBlocked:   true,
+		SymphonyRetrying:  true,
+		SymphonyScheduled: false,
+		"":                false,
+	}
+	for state, want := range tests {
+		if got := symphonyHasIt(Ticket{Symphony: state}); got != want {
+			t.Errorf("symphonyHasIt(%q) = %v, want %v", state, got, want)
+		}
+	}
+}

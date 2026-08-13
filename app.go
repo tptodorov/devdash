@@ -150,9 +150,10 @@ type transitionAppliedMsg struct {
 }
 
 type scheduledMsg struct {
-	key     string
-	summary string // what changed, for the flash
-	err     error
+	key         string
+	summary     string // what changed, for the flash
+	unscheduled bool
+	err         error
 }
 
 type tickMsg time.Time
@@ -225,7 +226,8 @@ func (a *app) refresh() tea.Cmd {
 				warn = fmt.Errorf("child counts unavailable: %w", warn)
 			}
 			// Symphony is rediscovered and queried on every refresh.
-			info := symphonyLookup(ctx)
+			cwd, _ := os.Getwd()
+			info := symphonyLookup(ctx, cwd)
 			applySymphony(tickets, info)
 			return ticketsMsg{tickets: tickets, warn: warn, symphonyURL: info.endpoint}
 		})
@@ -263,16 +265,12 @@ func (a *app) refresh() tea.Cmd {
 //
 // Symphony not running is the ordinary case, so every failure here is silent: a
 // banner would cry wolf on most refreshes.
-func symphonyLookup(ctx context.Context) symphonyInfo {
+func symphonyLookup(ctx context.Context, dir string) symphonyInfo {
 	var info symphonyInfo
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		return info
-	}
 	// The configuration is a local file, so the conditions are known even when
 	// the server is not running: a ticket can be queued with Symphony stopped.
-	if cfg, err := readSymphonyConfig(cwd); err == nil {
+	if cfg, err := readSymphonyConfig(dir); err == nil {
 		info.cfg, info.haveCfg = cfg, true
 		if cfg.Server.Port > 0 {
 			host := cfg.Server.Host
@@ -347,7 +345,11 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.setFlash("scheduling " + msg.key + " failed: " + msg.err.Error())
 			return a, nil
 		}
-		a.setFlash(msg.key + " scheduled for Symphony — " + msg.summary)
+		verb := "scheduled for Symphony"
+		if msg.unscheduled {
+			verb = "unscheduled"
+		}
+		a.setFlash(msg.key + " " + verb + " — " + msg.summary)
 		return a, a.refresh()
 
 	case ticketsMsg:
@@ -478,13 +480,13 @@ func (a *app) scheduleForSymphony() tea.Cmd {
 		return nil
 	}
 
-	plan := planSchedule(cfg, ticket)
+	plan := planToggle(cfg, ticket)
 	if plan.refusal != "" {
-		a.setFlash("cannot schedule: " + plan.refusal)
+		a.setFlash(plan.refusal)
 		return nil
 	}
 	if plan.nothingToDo() {
-		a.setFlash(ticket.Key + " is already scheduled for Symphony")
+		a.setFlash("nothing to change for " + ticket.Key)
 		return nil
 	}
 
@@ -495,7 +497,9 @@ func (a *app) scheduleForSymphony() tea.Cmd {
 		if err := applySchedule(ctx, jira, plan); err != nil {
 			return scheduledMsg{key: plan.key, err: err}
 		}
-		return scheduledMsg{key: plan.key, summary: plan.summary()}
+		return scheduledMsg{
+			key: plan.key, summary: plan.summary(), unscheduled: plan.unschedule,
+		}
 	}
 }
 
