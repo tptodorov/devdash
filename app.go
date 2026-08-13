@@ -4,12 +4,28 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// Column kinds that left/right can stop on.
+const (
+	stopTicket   = "ticket"
+	stopChildren = "children"
+	stopPR       = "pr"
+	stopSymphony = "symphony"
+)
+
+// rowStop is one left/right column on a row, and what enter does there.
+type rowStop struct {
+	kind string
+	url  string // what enter opens
+	what string // shown in the flash when there is nothing to open
+}
 
 // selRow records what the cursor can act on for each selectable row. id is a
 // stable identity so the cursor stays on the same row across a refresh, even
@@ -22,6 +38,8 @@ type selRow struct {
 	status    string
 	ticketURL string // empty on rows that are only a pull request
 	prURLs    []string
+	// stops are the left/right columns, in screen order.
+	stops []rowStop
 }
 
 // openTarget is what enter opens: the ticket, or the pull request on rows that
@@ -67,6 +85,7 @@ type app struct {
 	// spans every repository. It is shown in the header so a narrowed list is
 	// never mistaken for the whole picture, hyperlinked to prScopeURL.
 	prScope       string
+	symphonyURL   string
 	prScopeURL    string
 	explicitQuery bool
 
@@ -84,6 +103,7 @@ type app struct {
 	sel     []selRow
 
 	cursor int
+	col    int // index into the current row's stops
 	offset int
 	width  int
 	height int
@@ -108,6 +128,8 @@ type ticketsMsg struct {
 	// warn reports a non-fatal problem: the tickets are usable but some
 	// enrichment failed, so it is shown alongside the data rather than instead.
 	warn error
+	// symphonyURL is where the local Symphony answered, empty when it did not.
+	symphonyURL string
 }
 
 type prsMsg struct {
@@ -197,8 +219,9 @@ func (a *app) refresh() tea.Cmd {
 				warn = fmt.Errorf("child counts unavailable: %w", warn)
 			}
 			// Symphony is rediscovered and queried on every refresh.
-			applySymphony(tickets, symphonyLookup(ctx))
-			return ticketsMsg{tickets: tickets, warn: warn}
+			state, endpoint := symphonyLookup(ctx)
+			applySymphony(tickets, state)
+			return ticketsMsg{tickets: tickets, warn: warn, symphonyURL: endpoint}
 		})
 	}
 
@@ -234,14 +257,14 @@ func (a *app) refresh() tea.Cmd {
 //
 // Symphony not running is the ordinary case, so every failure here is silent: a
 // banner would cry wolf on most refreshes.
-func symphonyLookup(ctx context.Context) map[string]string {
+func symphonyLookup(ctx context.Context) (map[string]string, string) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil
+		return nil, ""
 	}
 	endpoint, err := symphonyEndpoint(cwd)
 	if err != nil {
-		return nil // no WORKFLOW.md, or no server block in it
+		return nil, "" // no WORKFLOW.md, or no server block in it
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, symphonyTimeout)
@@ -249,9 +272,9 @@ func symphonyLookup(ctx context.Context) map[string]string {
 
 	state, err := SymphonyState(ctx, &http.Client{Timeout: symphonyTimeout}, endpoint)
 	if err != nil {
-		return nil // not listening, or not answering
+		return nil, "" // not listening, or not answering
 	}
-	return state
+	return state, endpoint
 }
 
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -305,6 +328,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.pendingJIRA = false
 		a.jiraErr = msg.err
 		a.jiraWarn = msg.warn
+		a.symphonyURL = msg.symphonyURL
 		if msg.err == nil {
 			a.tickets = msg.tickets
 		}
@@ -338,6 +362,10 @@ func (a *app) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.move(-1)
 	case "down", "j":
 		a.move(1)
+	case "left", "h":
+		a.moveColumn(-1)
+	case "right", "l":
+		a.moveColumn(1)
 	case "g", "home":
 		a.cursor = 0
 	case "G", "end":
@@ -346,7 +374,9 @@ func (a *app) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.move(-10)
 	case "pgdown":
 		a.move(10)
-	case "enter", "o":
+	case "enter":
+		a.openColumn()
+	case "o":
 		if s, ok := a.current(); ok {
 			_ = openURL(s.openTarget())
 		}
@@ -366,6 +396,30 @@ func (a *app) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.showHelp = !a.showHelp
 	}
 	return a, nil
+}
+
+// openColumn does the default thing for the column left/right is on.
+func (a *app) openColumn() {
+	stop, ok := a.activeStop()
+	if !ok {
+		return
+	}
+	if stop.url == "" {
+		// Only reachable for a Symphony stop when the endpoint is not known.
+		a.setFlash("nothing to open for " + stop.what)
+		return
+	}
+	_ = openURL(stop.url)
+}
+
+// childrenSearchURL turns a ticket's browse URL into a JIRA search for the
+// issues that call it their parent.
+func childrenSearchURL(browseURL, key string) string {
+	base, _, found := strings.Cut(browseURL, "/browse/")
+	if !found || base == "" {
+		return ""
+	}
+	return base + "/issues/?jql=" + url.QueryEscape("parent = "+key)
 }
 
 // copyRow puts the selected row's shareable snippet on the clipboard.
@@ -511,7 +565,28 @@ func (a *app) move(delta int) {
 	if len(a.sel) == 0 {
 		return
 	}
-	a.cursor = clamp(a.cursor+delta, 0, len(a.sel)-1)
+	if next := clamp(a.cursor+delta, 0, len(a.sel)-1); next != a.cursor {
+		a.cursor = next
+		a.col = 0 // start each row on the ticket
+	}
+}
+
+// moveColumn walks left or right along the selected row's columns.
+func (a *app) moveColumn(delta int) {
+	row, ok := a.current()
+	if !ok || len(row.stops) == 0 {
+		return
+	}
+	a.col = clamp(a.col+delta, 0, len(row.stops)-1)
+}
+
+// activeStop is the column enter acts on, if the row has any.
+func (a *app) activeStop() (rowStop, bool) {
+	row, ok := a.current()
+	if !ok || len(row.stops) == 0 {
+		return rowStop{}, false
+	}
+	return row.stops[clamp(a.col, 0, len(row.stops)-1)], true
 }
 
 func (a *app) current() (selRow, bool) {
@@ -556,19 +631,47 @@ func (a *app) settle() {
 			for _, pr := range t.PRs {
 				s.prURLs = append(s.prURLs, pr.URL)
 			}
+
+			// Stops appear only where the column does, so the walk matches
+			// what is on screen.
+			s.stops = append(s.stops, rowStop{kind: stopTicket, url: t.URL, what: t.Key})
+			if t.ChildCount > 0 {
+				s.stops = append(s.stops, rowStop{
+					kind: stopChildren,
+					url:  childrenSearchURL(t.URL, t.Key),
+					what: fmt.Sprintf("%d sub-tickets of %s", t.ChildCount, t.Key),
+				})
+			}
+			for _, pr := range t.PRs {
+				s.stops = append(s.stops, rowStop{
+					kind: stopPR, url: pr.URL,
+					what: fmt.Sprintf("%s #%d", pr.Repo, pr.Number),
+				})
+			}
+			if t.Symphony != "" {
+				s.stops = append(s.stops, rowStop{
+					kind: stopSymphony, url: a.symphonyURL,
+					what: "the Symphony dashboard",
+				})
+			}
 			a.sel = append(a.sel, s)
 		}
 	}
 	for _, pr := range a.orphans {
+		label := fmt.Sprintf("%s #%d", pr.Repo, pr.Number)
 		a.sel = append(a.sel, selRow{
 			id:      "pr:" + pr.URL,
-			label:   fmt.Sprintf("%s #%d", pr.Repo, pr.Number),
+			label:   label,
 			summary: pr.Title,
 			prURLs:  []string{pr.URL},
+			stops:   []rowStop{{kind: stopPR, url: pr.URL, what: label}},
 		})
 	}
 
 	a.cursor = clamp(a.cursor, 0, max(0, len(a.sel)-1))
+	if row, ok := a.current(); ok {
+		a.col = clamp(a.col, 0, max(0, len(row.stops)-1))
+	}
 	if wasOn != "" {
 		for i, s := range a.sel {
 			if s.id == wasOn {

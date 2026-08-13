@@ -136,7 +136,7 @@ func computeLayout(width int, w widths) layout {
 }
 
 // prSegs renders a pull request reference: repo, number and status badges.
-func prSegs(pr PullRequest, w int) []seg {
+func prSegs(pr PullRequest, w int, stop int) []seg {
 	var badges []seg
 	if pr.Archived {
 		badges = append(badges, seg{text: " archived", st: warnStyle})
@@ -173,7 +173,11 @@ func prSegs(pr PullRequest, w int) []seg {
 	label := trunc(fmt.Sprintf("%s #%d", pr.Repo, pr.Number), labelBudget)
 
 	segs := append(lead, seg{text: label, st: prStateStyle(pr), link: pr.URL})
-	return append(segs, badges...)
+	segs = append(segs, badges...)
+	for i := range segs {
+		segs[i].stop = stop
+	}
+	return segs
 }
 
 // buildBody renders the dashboard rows and reports, for each selectable row,
@@ -217,10 +221,16 @@ func (a *app) buildBody(lay layout) (lines []string, rowLine []int) {
 		lines = append(lines, groupHeader(g.Status, g.Category, len(g.Tickets), lay.width))
 		for _, t := range g.Tickets {
 			selected := row == a.cursor
+			stops := a.stopsFor(row)
+			active := noStop
+			if selected {
+				active = a.col
+			}
 			rowLine = append(rowLine, len(lines))
-			lines = append(lines, a.ticketLine(t, lay, selected))
-			for _, extra := range t.PRs[min(1, len(t.PRs)):] {
-				lines = append(lines, a.prContinuationLine(extra, lay, selected))
+			lines = append(lines, a.ticketLine(t, lay, selected, stops, active))
+			for i, extra := range t.PRs[min(1, len(t.PRs)):] {
+				lines = append(lines,
+					a.prContinuationLine(extra, lay, selected, stopTag(prStopIndex(stops, i+1)), active))
 			}
 			row++
 		}
@@ -231,8 +241,12 @@ func (a *app) buildBody(lay layout) (lines []string, rowLine []int) {
 		lines = append(lines, groupHeader("PRS WITHOUT AN ACTIVE TICKET", "", len(a.orphans), lay.width))
 		for _, pr := range a.orphans {
 			selected := row == a.cursor
+			active := noStop
+			if selected {
+				active = a.col
+			}
 			rowLine = append(rowLine, len(lines))
-			lines = append(lines, a.orphanLine(pr, lay, selected))
+			lines = append(lines, a.orphanLine(pr, lay, selected, active))
 			row++
 		}
 		lines = append(lines, "")
@@ -242,6 +256,29 @@ func (a *app) buildBody(lay layout) (lines []string, rowLine []int) {
 		lines = lines[:len(lines)-1]
 	}
 	return lines, rowLine
+}
+
+// stopsFor returns the left/right columns of a selectable row.
+func (a *app) stopsFor(row int) []rowStop {
+	if row < 0 || row >= len(a.sel) {
+		return nil
+	}
+	return a.sel[row].stops
+}
+
+// prStopIndex finds the column index of the nth pull request on a row.
+func prStopIndex(stops []rowStop, nth int) int {
+	seen := 0
+	for i, st := range stops {
+		if st.kind != stopPR {
+			continue
+		}
+		if seen == nth {
+			return i
+		}
+		seen++
+	}
+	return noStop
 }
 
 // groupHeader draws a section rule. A count of zero or less is omitted, so
@@ -272,10 +309,25 @@ func gutterSeg(selected bool) seg {
 	return seg{text: "  "}
 }
 
-func (a *app) ticketLine(t Ticket, lay layout, selected bool) string {
+func (a *app) ticketLine(t Ticket, lay layout, selected bool, stops []rowStop, active int) string {
+	// stopFor finds which left/right column a given kind occupies on this row.
+	stopFor := func(kind string, nth int) int {
+		seen := 0
+		for i, st := range stops {
+			if st.kind != kind {
+				continue
+			}
+			if seen == nth {
+				return i
+			}
+			seen++
+		}
+		return noStop
+	}
+
 	segs := []seg{
 		gutterSeg(selected),
-		{text: pad(typeCode(t.Type), lay.typeW+1), st: mutedStyle},
+		{text: pad(typeCode(t.Type), lay.typeW+1), st: mutedStyle, stop: noStop},
 	}
 	if lay.childW > 0 {
 		// Right-align the count so the digits line up, and leave the cell empty
@@ -287,20 +339,22 @@ func (a *app) ticketLine(t Ticket, lay layout, selected bool) string {
 		segs = append(segs, seg{
 			text: padLeft(count, lay.childW) + " ",
 			st:   lipgloss.NewStyle().Foreground(accent),
+			stop: stopTag(stopFor(stopChildren, 0)),
 		})
 	}
+	ticketStop := stopTag(stopFor(stopTicket, 0))
 	segs = append(segs,
-		seg{text: pad(trunc(t.Key, lay.keyW), lay.keyW), st: keyStyle, link: t.URL},
-		seg{text: "  ", st: normalStyle},
-		seg{text: pad(trunc(t.Summary, lay.summary), lay.summary), st: normalStyle},
-		seg{text: "  ", st: normalStyle},
+		seg{text: pad(trunc(t.Key, lay.keyW), lay.keyW), st: keyStyle, link: t.URL, stop: ticketStop},
+		seg{text: "  ", st: normalStyle, stop: ticketStop},
+		seg{text: pad(trunc(t.Summary, lay.summary), lay.summary), st: normalStyle, stop: ticketStop},
+		seg{text: "  ", st: normalStyle, stop: noStop},
 	)
 
 	// The pull request cell, padded to its full width so whatever follows lines up.
 	var prCell []seg
 	if len(t.PRs) > 0 {
 		prCell = append(prCell, seg{text: "→", st: lipgloss.NewStyle().Foreground(accent)}, seg{text: "  "})
-		prCell = append(prCell, prSegs(t.PRs[0], lay.pr)...)
+		prCell = append(prCell, prSegs(t.PRs[0], lay.pr, stopTag(stopFor(stopPR, 0)))...)
 		if extra := len(t.PRs) - 1; extra > 0 {
 			prCell = append(prCell, seg{text: fmt.Sprintf(" +%d", extra), st: faintStyle})
 		}
@@ -317,30 +371,30 @@ func (a *app) ticketLine(t Ticket, lay layout, selected bool) string {
 			segs = append(segs, seg{text: strings.Repeat(" ", fill)})
 		}
 		marker, style := symphonyMarker(t.Symphony)
-		segs = append(segs, seg{text: " " + marker, st: style})
+		segs = append(segs, seg{text: " " + marker, st: style, stop: stopTag(stopFor(stopSymphony, 0))})
 	}
 
 	if selected {
-		segs = highlight(segs, lay.width)
+		segs = highlight(segs, lay.width, active)
 	}
 	return segsRender(segs, a.hyperlinks)
 }
 
 // prContinuationLine renders a ticket's second and later pull requests, aligned
 // under the first and highlighted with the ticket they belong to.
-func (a *app) prContinuationLine(pr PullRequest, lay layout, selected bool) string {
-	segs := []seg{{text: strings.Repeat(" ", lay.prColumn())}}
-	segs = append(segs, prSegs(pr, lay.pr)...)
+func (a *app) prContinuationLine(pr PullRequest, lay layout, selected bool, stop, active int) string {
+	segs := []seg{{text: strings.Repeat(" ", lay.prColumn()), stop: noStop}}
+	segs = append(segs, prSegs(pr, lay.pr, stop)...)
 	if selected {
-		segs = highlight(segs, lay.width)
+		segs = highlight(segs, lay.width, active)
 	}
 	return segsRender(segs, a.hyperlinks)
 }
 
-func (a *app) orphanLine(pr PullRequest, lay layout, selected bool) string {
+func (a *app) orphanLine(pr PullRequest, lay layout, selected bool, active int) string {
 	const refW = 24
-	segs := []seg{gutterSeg(selected), {text: pad("⇢", 2), st: faintStyle}}
-	prRef := prSegs(pr, refW)
+	segs := []seg{gutterSeg(selected), {text: pad("⇢", 2), st: faintStyle, stop: noStop}}
+	prRef := prSegs(pr, refW, stopTag(0))
 	segs = append(segs, prRef...)
 	if n := refW - segsWidth(prRef); n > 0 {
 		segs = append(segs, seg{text: strings.Repeat(" ", n)})
@@ -351,7 +405,7 @@ func (a *app) orphanLine(pr PullRequest, lay layout, selected bool) string {
 	segs = append(segs, seg{text: "  "}, seg{text: trunc(pr.Title, titleW), st: mutedStyle})
 
 	if selected {
-		segs = highlight(segs, lay.width)
+		segs = highlight(segs, lay.width, active)
 	}
 	return segsRender(segs, a.hyperlinks)
 }
@@ -413,7 +467,8 @@ var footerHints = []struct {
 	keep int
 }{
 	{"↑↓ move", 2},
-	{"⏎ ticket", 3},
+	{"←→ column", 3},
+	{"⏎ open", 3},
 	{"p PR", 5},
 	{"c copy", 4},
 	{"s status", 4},
@@ -450,8 +505,10 @@ func (a *app) footerView() string {
 func (a *app) helpView(lay layout) []string {
 	rows := [][2]string{
 		{"↑/k, ↓/j", "move between rows"},
+		{"←/h, →/l", "move between the columns of the selected row"},
 		{"g / G", "jump to first / last row"},
-		{"enter, o", "open the selected ticket in the browser"},
+		{"enter", "open whatever the selected column points at"},
+		{"o", "open the ticket, whichever column is selected"},
 		{"p", "open the selected row's pull request"},
 		{"c", "copy a shareable snippet of the row to the clipboard"},
 		{"s", "change the selected ticket's status"},

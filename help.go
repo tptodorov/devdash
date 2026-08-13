@@ -95,8 +95,10 @@ func writeHelp(w io.Writer) {
 	section(w, "KEYS")
 	for _, k := range [][2]string{
 		{"↑/k, ↓/j", "move between rows"},
+		{"←/h, →/l", "move between the columns of the selected row"},
 		{"g / G", "jump to the first / last row"},
-		{"enter, o", "open the selected ticket in a browser"},
+		{"enter", "open whatever the selected column points at"},
+		{"o", "open the ticket, whichever column is selected"},
 		{"p", "open the selected row's pull request"},
 		{"c", "copy a shareable snippet: title, ticket link, every PR link"},
 		{"s", "change the selected ticket's status"},
@@ -107,6 +109,18 @@ func writeHelp(w io.Writer) {
 	} {
 		row(w, k[0], k[1])
 	}
+
+	section(w, "COLUMN NAVIGATION")
+	prose(w, "Left and right walk the columns of the selected row, which is shown a shade")
+	prose(w, "brighter. Enter then opens what that column points at:")
+	prose(w, "")
+	row(w, "ticket", "the ticket in JIRA")
+	row(w, "children", "a JIRA search for its sub-tickets")
+	row(w, "pull request", "that pull request; each one on the row is its own column")
+	row(w, "Symphony", "the Symphony dashboard")
+	prose(w, "")
+	prose(w, "Columns appear only when they do on screen, so left and right never land")
+	prose(w, "somewhere that would do nothing.")
 
 	section(w, "COLUMNS")
 	row(w, "type", "initials of the issue type's words: Sub-task ST, New Feature NF")

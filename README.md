@@ -113,8 +113,10 @@ devdash -all-repos      # ignore the current repository, show everything
 | Key | Action |
 | --- | ------ |
 | `↑`/`k`, `↓`/`j` | move between rows |
+| `←`/`h`, `→`/`l` | move between the columns of the selected row |
 | `g` / `G` | jump to the first / last row |
-| `enter`, `o` | open the selected ticket in a browser |
+| `enter` | open whatever the selected column points at |
+| `o` | open the ticket, whichever column is selected |
 | `p` | open the selected row's pull request |
 | `c` | copy a shareable snippet: title, ticket link, every PR link |
 | `s` | change the selected ticket's status |
@@ -125,6 +127,32 @@ devdash -all-repos      # ignore the current repository, show everything
 
 Ticket keys and PR references are OSC 8 hyperlinks — ⌘-click them in iTerm2,
 Ghostty, WezTerm, Kitty or any terminal that supports links.
+
+## Column navigation
+
+Left and right walk the columns of the selected row, which is shown a shade
+brighter than the rest of the highlight. Enter opens whatever that column points
+at:
+
+| Column | `enter` opens |
+| ------ | ------------- |
+| ticket | the ticket in JIRA |
+| children | a JIRA search for its sub-tickets |
+| pull request | that pull request — each PR on the row is its own column |
+| Symphony | the Symphony dashboard |
+
+```
+  T   4 PROJ-455  Add a shared database registry  →   platform #1088 󰄴 rev✓ +1  ♪
+        │  └──────────────┬─────────────────┘             └──────┬──────┘      │
+        │                 │                                     │             │
+        └ children        └ ticket                               └ PR          └ Symphony
+                                                     the second PR is the next column,
+                                                     on the line below
+```
+
+Columns appear only when they do on screen, so left and right never land
+somewhere that would do nothing: a ticket with no children, no PR and no Symphony
+session has a single column. `o` still opens the ticket from anywhere on the row.
 
 ## Reading a row
 

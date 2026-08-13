@@ -11,8 +11,10 @@ import (
 )
 
 const (
-	// bgEscape is the SGR sequence for the dark-theme selection background.
-	bgEscape = "48;5;238"
+	// bgEscape is the SGR sequence for the dark-theme selection background, and
+	// colEscape the brighter one marking the column left/right is on.
+	bgEscape  = "48;5;238"
+	colEscape = "48;5;243"
 	// boldEscape is how lipgloss opens a bold run.
 	boldEscape = "\x1b[1;"
 )
@@ -78,7 +80,10 @@ func TestSelectedRowIsHighlightedEndToEnd(t *testing.T) {
 
 		// Every styled run on the row is bold and painted, not just the ticket:
 		// the PR reference at the far end must be emphasised too.
-		bold, painted := countSGR(selected, boldEscape), countSGR(selected, bgEscape)
+		bold := countSGR(selected, boldEscape)
+		// Either background counts as painted: the active column uses the
+		// brighter one.
+		painted := countSGR(selected, bgEscape) + countSGR(selected, colEscape)
 		if bold < 4 {
 			t.Errorf("width %d: only %d bold runs on the selected row: %q", width, bold, selected)
 		}
@@ -215,7 +220,7 @@ func TestPRBadges(t *testing.T) {
 			pr.Repo, pr.Number = "r", 1
 
 			var plain strings.Builder
-			for _, s := range prSegs(pr, 34) {
+			for _, s := range prSegs(pr, 34, 0) {
 				plain.WriteString(s.text)
 			}
 			got := plain.String()
@@ -249,7 +254,7 @@ func TestPRStateIconLeadsTheCell(t *testing.T) {
 			pr.Repo, pr.Number, pr.CI = "repo", 1, "SUCCESS"
 
 			var plain strings.Builder
-			for _, s := range prSegs(pr, 34) {
+			for _, s := range prSegs(pr, 34, 0) {
 				plain.WriteString(s.text)
 			}
 			got := plain.String()
@@ -288,7 +293,7 @@ func TestFallbackIconsWhenNerdFontDisabled(t *testing.T) {
 	t.Cleanup(func() { useNerdFont = true })
 
 	var plain strings.Builder
-	for _, s := range prSegs(PullRequest{Repo: "repo", Number: 1, State: "MERGED", CI: "FAILURE"}, 34) {
+	for _, s := range prSegs(PullRequest{Repo: "repo", Number: 1, State: "MERGED", CI: "FAILURE"}, 34, 0) {
 		plain.WriteString(s.text)
 	}
 	got := plain.String()
@@ -332,7 +337,7 @@ func TestPRStateColours(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			pr := tc.pr
 			pr.Repo, pr.Number = "repo", 1
-			rendered := segsRender(prSegs(pr, 34), false)
+			rendered := segsRender(prSegs(pr, 34, 0), false)
 
 			if !strings.Contains(rendered, "38;5;"+tc.want+"m") {
 				t.Errorf("%s rendered %q, want foreground %s", tc.name, rendered, tc.want)

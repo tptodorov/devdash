@@ -19,8 +19,10 @@ var (
 	colorMerged = lipgloss.Color("141")
 
 	// selBg paints the selected row end to end, so the highlight covers the
-	// ticket, the pull request and the space between them.
-	selBg = lipgloss.AdaptiveColor{Light: "254", Dark: "238"}
+	// ticket, the pull request and the space between them. selColBg is a shade
+	// brighter, marking the column left/right is currently on.
+	selBg    = lipgloss.AdaptiveColor{Light: "254", Dark: "238"}
+	selColBg = lipgloss.AdaptiveColor{Light: "250", Dark: "243"}
 
 	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(accent)
 	normalStyle   = lipgloss.NewStyle().Foreground(fgNormal)
@@ -214,6 +216,21 @@ type seg struct {
 	text string
 	st   lipgloss.Style
 	link string // optional URL to wrap this segment in an OSC 8 hyperlink
+	// stop marks which left/right column this segment belongs to, stored one
+	// higher than the column index so that the zero value means "no column".
+	// Anything not explicitly tagged is therefore never painted as active.
+	stop int
+}
+
+// noStop is the zero value: a segment left/right never lands on.
+const noStop = 0
+
+// stopTag encodes a column index for seg.stop, mapping "none" to the zero value.
+func stopTag(col int) int {
+	if col < 0 {
+		return noStop
+	}
+	return col + 1
 }
 
 func segsWidth(ss []seg) int {
@@ -249,10 +266,14 @@ func segsPad(ss []seg, w int, hyperlinks bool) string {
 // background and bold text, and the row is padded out to width. Doing it here
 // means selection styling is decided in one place, and the whole row — ticket,
 // connector and pull request alike — is emphasised rather than just the ticket.
-func highlight(segs []seg, width int) []seg {
+func highlight(segs []seg, width int, activeStop int) []seg {
 	out := make([]seg, 0, len(segs)+1)
 	for _, s := range segs {
-		s.st = s.st.Background(selBg).Bold(true)
+		bg := selBg
+		if activeStop >= 0 && s.stop == stopTag(activeStop) {
+			bg = selColBg
+		}
+		s.st = s.st.Background(bg).Bold(true)
 		out = append(out, s)
 	}
 	if fill := width - segsWidth(segs); fill > 0 {
