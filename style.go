@@ -69,17 +69,23 @@ var (
 	useNerdFont = true
 
 	nerdPRIcons = prIconSet{
-		draft:  "", // nf-oct-git_pull_request_draft
-		open:   "", // nf-oct-git_pull_request
-		merged: "", // nf-oct-git_merge
-		closed: "", // nf-oct-git_pull_request_closed
+		// workmux uses U+F177 and U+F406 here, but current Nerd Fonts have
+		// reassigned both: F177 is fa-arrow_left_long and F406 is
+		// oct-accessibility. These are the positions the draft and closed
+		// Octicons actually live at now.
+		draft:  "\uf4dd", // nf-oct-git_pull_request_draft
+		open:   "\uf407", // nf-oct-git_pull_request
+		merged: "\uf419", // nf-oct-git_merge
+		closed: "\uf4dc", // nf-oct-git_pull_request_closed
 	}
 	fallbackPRIcons = prIconSet{draft: "○", open: "●", merged: "◆", closed: "×"}
 
 	nerdCheckIcons = checkIconSet{
-		success: "\U000f0134", // nf-md-check_circle
+		success: "\U000f0134", // nf-md-checkbox_marked_circle_outline
 		failure: "\U000f0159", // nf-md-close_circle
-		pending: "\U000f0520", // nf-md-timer_sand
+		// workmux writes U+F0520 here and calls it timer_sand, but that is
+		// md-timetable; timer_sand is one position lower.
+		pending: "\U000f051f", // nf-md-timer_sand
 	}
 	fallbackCheckIcons = checkIconSet{success: "✓", failure: "×", pending: "◷"}
 )

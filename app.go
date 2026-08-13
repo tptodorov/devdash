@@ -74,6 +74,7 @@ type app struct {
 	autoRefresh     bool
 	hyperlinks      bool
 	snapshotMode    bool
+	demo            bool
 	includeArchived bool
 
 	tickets []Ticket
@@ -167,6 +168,9 @@ func (a *app) loading() bool { return a.pendingJIRA || a.pendingGH }
 // refresh starts both fetches. Sources are independent, so a failure in one
 // still lets the other update.
 func (a *app) refresh() tea.Cmd {
+	if a.demo {
+		return nil // sample data, nothing to fetch
+	}
 	var cmds []tea.Cmd
 
 	if !a.pendingJIRA {

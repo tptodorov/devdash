@@ -37,6 +37,8 @@ func main() {
 		"render plain text instead of OSC 8 terminal hyperlinks")
 	once := flag.Bool("once", false,
 		"print a single snapshot and exit instead of running the interactive UI")
+	demo := flag.Bool("demo", false,
+		"show sample data instead of contacting JIRA or GitHub; needs no credentials")
 	noNerdFont := flag.Bool("no-nerd-font", false,
 		"use plain Unicode instead of Nerd Font glyphs for pull request icons")
 	includeArchived := flag.Bool("include-archived", false,
@@ -67,17 +69,23 @@ func main() {
 
 	a := newApp(*jql, "", interval, !*noLinks, *includeArchived)
 
+	if *demo {
+		a.loadDemo()
+	}
+
 	// Resolving the repository costs one round trip, so do it once at startup
 	// rather than on every refresh.
 	repo := ""
-	if *prQuery == "" && !*allRepos {
+	if *prQuery == "" && !*allRepos && !*demo {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		cwd, _ := os.Getwd()
 		repo, _ = DetectRepo(ctx, a.gh, cwd) // not in a repo: fall back to all
 		cancel()
 	}
-	a.ghQuery, a.prScope = prSearchQuery(*prQuery, repo, *allRepos)
-	a.explicitQuery = *prQuery != ""
+	if !*demo {
+		a.ghQuery, a.prScope = prSearchQuery(*prQuery, repo, *allRepos)
+		a.explicitQuery = *prQuery != ""
+	}
 	if a.prScope != "" {
 		a.prScopeURL = "https://github.com/" + a.prScope
 	}

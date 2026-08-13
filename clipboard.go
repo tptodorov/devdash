@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -44,14 +45,14 @@ func copyToClipboard(text string) error {
 			return nil
 		}
 	}
-	return osc52Copy(text)
+	return osc52Copy(os.Stdout, text)
 }
 
 // osc52Copy asks the terminal itself to set the clipboard. Support varies by
 // terminal, so a nil error here means the request was sent, not that it landed.
-func osc52Copy(text string) error {
+func osc52Copy(w io.Writer, text string) error {
 	encoded := base64.StdEncoding.EncodeToString([]byte(text))
-	if _, err := fmt.Fprintf(os.Stdout, "\x1b]52;c;%s\x07", encoded); err != nil {
+	if _, err := fmt.Fprintf(w, "\x1b]52;c;%s\x07", encoded); err != nil {
 		return fmt.Errorf("no clipboard tool found and the terminal refused the copy: %w", err)
 	}
 	return nil

@@ -3,28 +3,16 @@
 Your assigned JIRA tickets and the pull requests addressing them, on one page, in
 your terminal.
 
+[![CI](https://github.com/tptodorov/devdash/actions/workflows/ci.yml/badge.svg)](https://github.com/tptodorov/devdash/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-```
-◈ DEVDASH  9 tickets · 4 PRs in https://github.com/acme/platform          ⟳ 10s · 14:22:07
+![devdash](docs/screenshot.png)
 
-▌ AWAITING CR ──────────────────────────────────────────────────────────────────────── 2
-  T     PROJ-482   Mark the CI wait helper as manual-only          →   platform #1099 󰄴 rev?
-  ST    PROJ-475   Add account identifiers to each database        →   platform #1103 󰄴 rev✓
+Try it before configuring anything — this is the screenshot above, live:
 
-▌ IN PROGRESS ──────────────────────────────────────────────────────────────────────── 2
-  E  11 PROJ-301   The on-prem effort                              ·  no PR
-  T   4 PROJ-455   Add a shared database registry                  ·  no PR            ♪
-
-▌ BACKLOG ─────────────────────────────────────────────────────────────────────────── 2
-  S     PROJ-198   Spike on package structure                      ·  no PR
-  S     PROJ-204   Improve configuration structure                 ·  no PR
-
-▌ PRS WITHOUT AN ACTIVE TICKET ─────────────────────────────────────────────────────── 1
-  ⇢  sandbox #5 󰅙   Monorepo template with clean architecture
-
-  ↑↓ move   ⏎ ticket   p PR   c copy   s status   r refresh   ? help   q quit
+```bash
+go run github.com/tptodorov/devdash@latest -demo
 ```
 
 ## Why
@@ -99,6 +87,7 @@ Run from inside a repository and the pull requests are narrowed to it; the heade
 says which one. Run from anywhere else and every repo you have PRs in is included.
 
 ```bash
+devdash -demo           # sample data, no credentials needed — see it before you set it up
 devdash --help          # everything below, plus every API call the tool makes
 devdash -once           # print one snapshot and exit, for piping or a cron job
 devdash -refresh 30s    # slow the auto-refresh down
@@ -143,13 +132,13 @@ where you can see if two types happen to share one.
 
 | | Nerd Font | Plain | Meaning |
 | --- | --- | --- | --- |
-| state |  | `●` | open |
-| | | `○` | draft |
-| |  | `◆` | merged |
-| |  | `×` | closed without merging |
-| checks | `󰄴` | `✓` | passing |
-| | `󰅙` | `×` | failing |
-| | `󰔠` | `◷` | still running |
+| state | `\uf407` | `●` | open |
+| | `\uf4dd` | `○` | draft |
+| | `\uf419` | `◆` | merged |
+| | `\uf4dc` | `×` | closed without merging |
+| checks | `\U000f0134` | `✓` | passing |
+| | `\U000f0159` | `×` | failing |
+| | `\U000f051f` | `◷` | still running |
 
 The icons match [workmux](https://github.com/raine/workmux), so the two read the
 same way side by side. The reference is also coloured by state, so it still reads
@@ -245,6 +234,7 @@ nothing is reported — that is the ordinary case.
 | `-no-nerd-font` | — | Nerd Font glyphs |
 | `-no-links` | — | hyperlinks on |
 | `-once` | — | interactive |
+| `-demo` | — | real data |
 
 Scope it to a project or an organisation by overriding the queries:
 
@@ -310,6 +300,10 @@ cd devdash
 go test ./...
 go build -o devdash .
 ```
+
+The README screenshot is rendered from `devdash -demo`, so it never contains
+anyone's real tickets. `TestDemoDataCoversEveryState` keeps the sample data
+covering everything the documentation claims to show.
 
 One test suite talks to real JIRA and is skipped unless you point it at a ticket
 you do not mind moving. It transitions the ticket and moves it back:

@@ -20,6 +20,36 @@ func (a *app) snapshot(w io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	if !a.demo {
+		a.fetchOnce(ctx)
+	}
+
+	a.autoRefresh = false
+	a.snapshotMode = true
+	a.settle()
+	a.cursor = -1 // a static snapshot has no cursor to highlight
+
+	// Size the frame to the content so a snapshot is never truncated.
+	body, _ := a.buildBody(a.layout())
+	a.height = len(body) + 6
+	if a.jiraErr != nil {
+		a.height++
+	}
+	if a.ghErr != nil {
+		a.height++
+	}
+
+	if _, err := fmt.Fprintln(w, a.View()); err != nil {
+		return err
+	}
+	if a.jiraErr != nil || a.ghErr != nil {
+		return fmt.Errorf("one or more sources failed")
+	}
+	return nil
+}
+
+// fetchOnce loads both sources concurrently for a single frame.
+func (a *app) fetchOnce(ctx context.Context) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -56,29 +86,6 @@ func (a *app) snapshot(w io.Writer) error {
 		a.prs, a.ghErr = prs, err
 	}()
 	wg.Wait()
-
-	a.autoRefresh = false
-	a.snapshotMode = true
-	a.settle()
-	a.cursor = -1 // a static snapshot has no cursor to highlight
-
-	// Size the frame to the content so a snapshot is never truncated.
-	body, _ := a.buildBody(a.layout())
-	a.height = len(body) + 6
-	if a.jiraErr != nil {
-		a.height++
-	}
-	if a.ghErr != nil {
-		a.height++
-	}
-
-	if _, err := fmt.Fprintln(w, a.View()); err != nil {
-		return err
-	}
-	if a.jiraErr != nil || a.ghErr != nil {
-		return fmt.Errorf("one or more sources failed")
-	}
-	return nil
 }
 
 // terminalSize reports the output terminal's dimensions, falling back to a
