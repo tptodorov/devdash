@@ -120,7 +120,7 @@ devdash -all-repos      # ignore the current repository, show everything
 | `p` | open the selected row's pull request |
 | `c` | copy a shareable snippet: title, ticket link, every PR link |
 | `s` | change the selected ticket's status |
-| `S` | schedule the ticket for Symphony, or unschedule it if queued |
+| `S` | schedule the ticket for Symphony, or take it back unless an agent is running |
 | `r` | refresh now |
 | `a` | pause or resume the automatic refresh |
 | `?` | keys, icons, and the issue types currently on screen |
@@ -247,9 +247,17 @@ or has been given, are marked in a column at the right-hand edge:
 
 | Marker | Meaning |
 | --- | --- |
+| `♪` grey | scheduled, waiting for Symphony to pick it up |
 | `♪` | Symphony is working on the ticket |
 | `!` | paused waiting for operator input or approval |
 | `↻` | waiting for the next retry window |
+
+`S` toggles. On a ticket Symphony would pick up it strips the required labels
+again, which is enough to release the ticket: Symphony re-reads the labels before
+it retries or reconsiders a blocked issue, so stuck work can be taken back, fixed,
+and scheduled afresh. Only a ticket an agent is actively running is refused, since
+removing a label cannot interrupt a turn already in progress — stop that session in
+Symphony instead. Unrelated labels and the ticket's status are left alone.
 
 The instance is located from the `server` block of `WORKFLOW.md`'s front matter,
 searching upward from the working directory:
