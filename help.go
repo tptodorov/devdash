@@ -102,7 +102,7 @@ func writeHelp(w io.Writer) {
 		{"p", "open the selected row's pull request"},
 		{"c", "copy a shareable snippet: title, ticket link, every PR link"},
 		{"s", "change the selected ticket's status"},
-		{"S", "schedule the ticket for Symphony, or unschedule it if queued"},
+		{"S", "schedule the ticket for Symphony, or take it back unless an agent is running"},
 		{"r", "refresh now"},
 		{"a", "pause or resume the automatic refresh"},
 		{"?", "keys, columns and the issue types currently on screen"},
@@ -152,9 +152,13 @@ func writeHelp(w io.Writer) {
 	prose(w, "On a ticket Symphony would not pick up, S adds whatever is missing. On one it")
 	prose(w, "already would, S removes the required labels again, leaving the status alone.")
 	prose(w, "")
+	prose(w, "Stuck work can be taken back: a blocked or retrying ticket comes out of the")
+	prose(w, "queue so it can be fixed and scheduled afresh, since Symphony re-reads the")
+	prose(w, "labels before it acts on either and drops its claim when they are gone.")
+	prose(w, "")
 	prose(w, "Refused rather than done: a ticket in a terminal_state, one from another")
-	prose(w, "project, and unscheduling one Symphony already holds a session for — the")
-	prose(w, "label would come off without the work stopping.")
+	prose(w, "project, and unscheduling one an agent is actively running — no label change")
+	prose(w, "interrupts a turn already in progress, so stop that session in Symphony.")
 	prose(w, "")
 	prose(w, "The instance is found from the server block of WORKFLOW.md's front matter,")
 	prose(w, "rediscovered and queried on every refresh, since Symphony starts and stops")

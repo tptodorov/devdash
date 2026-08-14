@@ -513,7 +513,7 @@ func (a *app) helpView(lay layout) []string {
 		{"p", "open the selected row's pull request"},
 		{"c", "copy a shareable snippet of the row to the clipboard"},
 		{"s", "change the selected ticket's status"},
-		{"S", "schedule the ticket for Symphony, or unschedule it if queued"},
+		{"S", "schedule the ticket for Symphony, or take it back unless an agent is running"},
 		{"r", "refresh now"},
 		{"a", "toggle automatic refresh"},
 		{"?", "toggle this help"},

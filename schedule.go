@@ -53,11 +53,18 @@ func scheduled(cfg symphonyConfig, t Ticket) bool {
 	return containsFold(cfg.Tracker.ActiveStates, t.Status)
 }
 
-// symphonyHasIt reports whether Symphony holds a live session for the ticket.
-// Running, blocked and retrying all mean it is in hand; only the scheduled marker
-// means nothing is in flight.
-func symphonyHasIt(t Ticket) bool {
-	return t.Symphony != "" && t.Symphony != SymphonyScheduled
+// symphonyIsWorkingOnIt reports whether Symphony has an agent actually working the
+// ticket, which is the one state a keystroke must not interrupt.
+//
+// Blocked and retrying are deliberately not included. Both mean Symphony is
+// holding the ticket without making progress — waiting for an operator, or failing
+// to start and backing off — and that is exactly when taking it back to fix it is
+// the point. Symphony re-reads the required labels before it acts on either: a
+// retry that fires re-checks routability and drops the claim when the label is
+// gone, and blocked issues are reconciled the same way. So removing the label does
+// stop the work, rather than merely hiding it from the dashboard.
+func symphonyIsWorkingOnIt(t Ticket) bool {
+	return t.Symphony == SymphonyRunning
 }
 
 // planToggle decides what the key does: a ticket Symphony would already pick up
@@ -67,9 +74,10 @@ func symphonyHasIt(t Ticket) bool {
 // would mean guessing where the ticket came from, and a ticket sitting in To Do
 // without the label is simply not Symphony's business.
 //
-// A ticket Symphony already has a session for cannot be unscheduled: removing the
-// label would not stop the work, it would only make the dashboard disagree with
-// what is happening.
+// A ticket an agent is actively running cannot be unscheduled, since removing the
+// label would not interrupt the turn in progress. A ticket that is blocked or
+// retrying can: Symphony re-checks the labels before it acts again, so the claim is
+// dropped and the ticket is free to be fixed and scheduled afresh.
 func planToggle(cfg symphonyConfig, t Ticket) schedulePlan {
 	if !scheduled(cfg, t) {
 		return planSchedule(cfg, t)
@@ -83,9 +91,8 @@ func planToggle(cfg symphonyConfig, t Ticket) schedulePlan {
 			return plan
 		}
 	}
-	if symphonyHasIt(t) {
-		plan.refusal = fmt.Sprintf("Symphony is already %s %s; stop the session first",
-			t.Symphony, t.Key)
+	if symphonyIsWorkingOnIt(t) {
+		plan.refusal = fmt.Sprintf("an agent is running %s; stop the session first", t.Key)
 		return plan
 	}
 	for _, label := range cfg.Tracker.RequiredLabels {
