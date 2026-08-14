@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if out=$(go build ./... 2>&1 && go test ./... 2>&1); then GOBIN=\"$HOME/.local/bin\" go install . >/dev/null 2>&1 && jq -n '{systemMessage:\"devdash: tests passed, deployed to ~/.local/bin\"}' || jq -n '{systemMessage:\"devdash: tests passed but go install failed\"}'; else jq -n --arg o \"$out\" '{systemMessage:(\"devdash: NOT deployed - build or tests failed:\\n\"+$o)}'; fi",
+            "timeout": 180,
+            "statusMessage": "Building, testing and deploying devdash..."
+          }
+        ]
+      }
+    ]
+  }
+}
