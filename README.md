@@ -297,7 +297,7 @@ and the colour says what Symphony is doing with it:
 | Marker | Meaning |
 | --- | --- |
 | `♪` grey | scheduled, waiting for Symphony to pick it up |
-| `♪` magenta | Symphony is working on the ticket |
+| `♪` cyan | Symphony is working on the ticket |
 | `♪` yellow | waiting for the next retry window |
 | `♪` red | paused waiting for operator input or approval |
 
