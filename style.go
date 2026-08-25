@@ -24,7 +24,10 @@ var (
 	colorWarn = lipgloss.Color("221")
 
 	colorMerged = lipgloss.Color("141") // a merged pull request, and nothing else
-	colorSym    = lipgloss.Color("213") // a Symphony session, and nothing else
+	// colorSym was magenta 213, which read as the same purple as a merged pull
+	// request when both landed on one row — and a ticket Symphony is working is
+	// exactly the kind that has one. Cyan shares a row with nothing.
+	colorSym = lipgloss.Color("87") // a Symphony session, and nothing else
 	// Review statuses used to share violet with a merged pull request, so one hue
 	// meant two unrelated things on the same screen. They get their own.
 	colorReview = lipgloss.Color("117")

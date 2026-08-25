@@ -154,7 +154,7 @@ func writeHelp(w io.Writer) {
 	prose(w, "")
 	for _, s := range []struct{ state, what string }{
 		{SymphonyScheduled, "grey: scheduled, waiting for Symphony to pick it up"},
-		{SymphonyRunning, "magenta: Symphony is working on it"},
+		{SymphonyRunning, "cyan: Symphony is working on it"},
 		{SymphonyRetrying, "yellow: waiting for the next retry window"},
 		{SymphonyBlocked, "red: paused waiting for operator input or approval"},
 	} {

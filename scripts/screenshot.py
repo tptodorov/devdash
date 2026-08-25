@@ -2,8 +2,9 @@
 """Render docs/screenshot.png from `devdash -demo`.
 
 The dashboard is captured through a pty so it emits colour, the ANSI is parsed
-into styled cells, and those are drawn with a real Nerd Font so the pull request
-glyphs appear as glyphs rather than as boxes.
+into styled cells, and those are drawn with a monospace font. Every glyph devdash
+draws is plain Unicode, so no patched font is needed — any monospace face with
+reasonable symbol coverage renders the image correctly.
 
     pip install Pillow
     go build -o devdash .
@@ -25,16 +26,19 @@ import time
 
 from PIL import Image, ImageDraw, ImageFont
 
-COLS, ROWS = 104, 44
+COLS, ROWS = 118, 44
 FONT_DIRS = [
     os.path.expanduser("~/Library/Fonts"),
     os.path.expanduser("~/.local/share/fonts"),
     "/usr/share/fonts",
 ]
+# Any monospace pair works. These are tried in order; the last is stock macOS, so
+# the script runs without installing anything.
 FONT_CANDIDATES = [
     ("IosevkaTermNerdFontMono-Regular.ttf", "IosevkaTermNerdFontMono-Bold.ttf"),
     ("JetBrainsMonoNerdFontMono-Regular.ttf", "JetBrainsMonoNerdFontMono-Bold.ttf"),
     ("MesloLGSNerdFontMono-Regular.ttf", "MesloLGSNerdFontMono-Bold.ttf"),
+    ("DejaVuSansMono.ttf", "DejaVuSansMono-Bold.ttf"),
 ]
 
 BG = (0x14, 0x16, 0x1B)
@@ -45,15 +49,16 @@ PAD_X, PAD_Y, TITLE_H = 26, 22, 40
 
 
 def find_fonts():
-    """Locate a Nerd Font regular/bold pair, or explain what to install."""
+    """Locate a monospace regular/bold pair, or explain what to install."""
     for regular, bold in FONT_CANDIDATES:
         for d in FONT_DIRS:
             r, b = os.path.join(d, regular), os.path.join(d, bold)
             if os.path.exists(r) and os.path.exists(b):
                 return r, b
     sys.exit(
-        "No Nerd Font found. Install one from https://www.nerdfonts.com "
-        f"into {FONT_DIRS[0]}, or add it to FONT_CANDIDATES."
+        "No monospace font found. Install any monospace face (for example "
+        "JetBrains Mono) "
+        f"into {FONT_DIRS[0]}, or add its filenames to FONT_CANDIDATES."
     )
 
 
@@ -107,13 +112,24 @@ def xterm256():
 PALETTE = xterm256()
 
 
+def resolve(style):
+    """Flatten a style for drawing, applying reverse video as a real swap."""
+    st = dict(style)
+    if st.pop("reverse", False):
+        st["fg"], st["bg"] = (st["bg"] or BG), st["fg"]
+    else:
+        st.pop("reverse", None)
+    return st
+
+
 def parse(text):
     """Turn ANSI output into rows of (character, style) pairs."""
     text = re.sub(r"\x1b\]8;;[^\x07\x1b]*(\x1b\\|\x07)", "", text)  # hyperlinks
     text = re.sub(r"\x1b\][^\x07\x1b]*(\x1b\\|\x07)", "", text)     # other OSC
     text = re.sub(r"\x1b\[\?[0-9;]*[a-zA-Z]", "", text)             # private modes
 
-    rows, style = [[]], {"fg": FG, "bg": None, "bold": False}
+    fresh = {"fg": FG, "bg": None, "bold": False, "reverse": False}
+    rows, style = [[]], dict(fresh)
     i = 0
     while i < len(text):
         if text.startswith("\x1b[", i):
@@ -124,11 +140,18 @@ def parse(text):
                 while j < len(codes):
                     c = codes[j]
                     if c == 0:
-                        style = {"fg": FG, "bg": None, "bold": False}
+                        style = dict(fresh)
                     elif c == 1:
                         style["bold"] = True
                     elif c == 22:
                         style["bold"] = False
+                    # Reverse video is load-bearing: it is how the most urgent
+                    # states read on a terminal with no colour, so the image has
+                    # to show it rather than drop it to a plain foreground.
+                    elif c == 7:
+                        style["reverse"] = True
+                    elif c == 27:
+                        style["reverse"] = False
                     elif c == 39:
                         style["fg"] = FG
                     elif c == 49:
@@ -155,7 +178,7 @@ def parse(text):
         if ch == "\n":
             rows.append([])
         elif ch not in ("\r", "\x1b"):
-            rows[-1].append((ch, dict(style)))
+            rows[-1].append((ch, resolve(style)))
         i += 1
 
     while rows and not any(c.strip() for c, _ in rows[-1]):
