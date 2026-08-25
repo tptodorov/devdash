@@ -15,7 +15,7 @@ import (
 // Column kinds that left/right can stop on.
 const (
 	stopTicket   = "ticket"
-	stopChildren = "children"
+	stopRelation = "relation"
 	stopPR       = "pr"
 	stopSymphony = "symphony"
 )
@@ -726,26 +726,29 @@ func (a *app) settle() {
 				s.prURLs = append(s.prURLs, pr.URL)
 			}
 
-			// Stops appear only where the column does, so the walk matches
-			// what is on screen.
-			s.stops = append(s.stops, rowStop{kind: stopTicket, url: t.URL, what: t.Key})
-			if t.ChildCount > 0 {
-				s.stops = append(s.stops, rowStop{
-					kind: stopChildren,
-					url:  childrenSearchURL(t.URL, t.Key),
-					what: fmt.Sprintf("%d sub-tickets of %s", t.ChildCount, t.Key),
-				})
-			}
-			for _, pr := range t.PRs {
-				s.stops = append(s.stops, rowStop{
-					kind: stopPR, url: pr.URL,
-					what: fmt.Sprintf("%s #%d", pr.Repo, pr.Number),
-				})
-			}
+			// Stops appear only where the column does, and in the order the
+			// columns are drawn, so the walk matches what is on screen. Symphony
+			// and the relation cell now sit left of the key, so they come first.
 			if t.Symphony != "" {
 				s.stops = append(s.stops, rowStop{
 					kind: stopSymphony, url: a.symphonyURL,
 					what: "the Symphony dashboard",
+				})
+			}
+			// A subtask's ↳ is decoration: there is nothing to open, because the
+			// ticket does not carry its parent's key. Only a child count is a stop.
+			if t.ChildCount > 0 {
+				s.stops = append(s.stops, rowStop{
+					kind: stopRelation,
+					url:  childrenSearchURL(t.URL, t.Key),
+					what: fmt.Sprintf("%d sub-tickets of %s", t.ChildCount, t.Key),
+				})
+			}
+			s.stops = append(s.stops, rowStop{kind: stopTicket, url: t.URL, what: t.Key})
+			for _, pr := range t.PRs {
+				s.stops = append(s.stops, rowStop{
+					kind: stopPR, url: pr.URL,
+					what: fmt.Sprintf("%s #%d", pr.Repo, pr.Number),
 				})
 			}
 			a.sel = append(a.sel, s)

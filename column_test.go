@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
 )
 
 // columnApp mirrors the demo row that exercises every stop: a task with
@@ -45,7 +47,7 @@ func TestRowStops(t *testing.T) {
 	if rich.ticketKey != "PROJ-455" {
 		t.Fatalf("expected PROJ-455 first, got %q", rich.ticketKey)
 	}
-	wantKinds := []string{stopTicket, stopChildren, stopPR, stopPR, stopSymphony}
+	wantKinds := []string{stopSymphony, stopRelation, stopTicket, stopPR, stopPR}
 	if len(rich.stops) != len(wantKinds) {
 		t.Fatalf("PROJ-455 has %d stops, want %d: %+v", len(rich.stops), len(wantKinds), rich.stops)
 	}
@@ -55,18 +57,19 @@ func TestRowStops(t *testing.T) {
 		}
 	}
 
-	// Each stop opens something distinct.
-	if got := rich.stops[0].url; got != "https://jira.test/browse/PROJ-455" {
-		t.Errorf("ticket stop opens %q", got)
+	// Each stop opens something distinct. The order is the order the columns are
+	// drawn, left to right, so left/right walks the row the way it reads.
+	if got := rich.stops[0].url; got != "http://127.0.0.1:10000" {
+		t.Errorf("Symphony stop opens %q", got)
 	}
 	if got := rich.stops[1].url; !strings.Contains(got, "/issues/?jql=") || !strings.Contains(got, "PROJ-455") {
-		t.Errorf("children stop opens %q, want a JIRA search for its children", got)
+		t.Errorf("relation stop opens %q, want a JIRA search for its children", got)
 	}
-	if rich.stops[2].url != "https://gh.test/1088" || rich.stops[3].url != "https://gh.test/1091" {
-		t.Errorf("PR stops open %q and %q", rich.stops[2].url, rich.stops[3].url)
+	if got := rich.stops[2].url; got != "https://jira.test/browse/PROJ-455" {
+		t.Errorf("ticket stop opens %q", got)
 	}
-	if got := rich.stops[4].url; got != "http://127.0.0.1:10000" {
-		t.Errorf("Symphony stop opens %q", got)
+	if rich.stops[3].url != "https://gh.test/1088" || rich.stops[4].url != "https://gh.test/1091" {
+		t.Errorf("PR stops open %q and %q", rich.stops[3].url, rich.stops[4].url)
 	}
 
 	// A bare ticket has only the one stop.
@@ -77,6 +80,113 @@ func TestRowStops(t *testing.T) {
 	if orphan := a.sel[len(a.sel)-1]; len(orphan.stops) != 1 || orphan.stops[0].kind != stopPR {
 		t.Errorf("orphan stops = %+v, want just the PR", orphan.stops)
 	}
+}
+
+// A ticket's later pull requests are on their own lines, which carry no ticket
+// of their own. The branch connector sits immediately left of the pull request
+// cell, and the cell starts in the same column as the first PR's, which is what
+// lets a column of pull request states be read straight down the page.
+func TestContinuationLinesAreConnectedToTheirTicket(t *testing.T) {
+	a := columnApp()
+	a.cursor = -1 // unhighlighted, so the columns are easy to measure
+	lay := a.layout()
+
+	body, rowLine := a.buildBody(lay)
+	ticketLine, continuation := body[rowLine[0]], body[rowLine[0]+1]
+
+	if !strings.Contains(continuation, "#1091") {
+		t.Fatalf("expected the second PR on the continuation line, got %q", continuation)
+	}
+
+	branch := connectorColumn(t, continuation, prBranch)
+	if want := lay.prColumn() - 2; branch != want {
+		t.Errorf("branch connector is at column %d, want %d", branch, want)
+	}
+
+	// The reference sits two columns into the cell, after the state glyph.
+	first := connectorColumn(t, ticketLine, "platform #1088")
+	second := connectorColumn(t, continuation, "platform #1091")
+	if first != second {
+		t.Errorf("first PR reference is at column %d but the second is at %d; "+
+			"they must line up", first, second)
+	}
+	if want := lay.prColumn() + 2; first != want {
+		t.Errorf("PR reference is at column %d, want %d", first, want)
+	}
+}
+
+// The pull request title is what fills the row out to the terminal's edge, in a
+// column of its own so it lines up across rows and continuation lines alike.
+func TestPRTitlesFillTheRow(t *testing.T) {
+	a := columnApp()
+	a.cursor = -1
+	lay := a.layout()
+	if lay.title == 0 {
+		t.Fatalf("no room for a title at width %d; the case is untested", a.width)
+	}
+
+	body, rowLine := a.buildBody(lay)
+	ticketLine, continuation := body[rowLine[0]], body[rowLine[0]+1]
+
+	// The key the title conventionally opens with is already on the row, so it
+	// is dropped rather than spending the widest column on a repeat.
+	for _, line := range []string{ticketLine, continuation} {
+		if strings.Contains(ansi.Strip(line), "PROJ-455:") {
+			t.Errorf("title repeats the ticket key: %q", ansi.Strip(line))
+		}
+	}
+	first := titleColumn(t, ticketLine, "first")
+	second := titleColumn(t, continuation, "second")
+	if first != second {
+		t.Errorf("titles start at columns %d and %d; they must line up", first, second)
+	}
+	if want := lay.prColumn() + lay.pr + 2; first != want {
+		t.Errorf("title starts at column %d, want %d", first, want)
+	}
+}
+
+func TestPRTitleDropsTheTicketKey(t *testing.T) {
+	tests := []struct {
+		pr   PullRequest
+		want string
+	}{
+		{PullRequest{Ticket: "PROJ-455", Title: "PROJ-455: registry groundwork"}, "registry groundwork"},
+		{PullRequest{Ticket: "PROJ-455", Title: "PROJ-455 wire the registry in"}, "wire the registry in"},
+		{PullRequest{Ticket: "PROJ-455", Title: "proj-455 — lower case"}, "lower case"},
+		// Nothing to drop: no ticket, the key elsewhere, or the key is all there is.
+		{PullRequest{Title: "Monorepo template"}, "Monorepo template"},
+		{PullRequest{Ticket: "PROJ-455", Title: "fix the PROJ-455 registry"}, "fix the PROJ-455 registry"},
+		{PullRequest{Ticket: "PROJ-455", Title: "PROJ-455"}, "PROJ-455"},
+	}
+	for _, tc := range tests {
+		if got := prTitle(tc.pr); got != tc.want {
+			t.Errorf("prTitle(%q) = %q, want %q", tc.pr.Title, got, tc.want)
+		}
+	}
+}
+
+// titleColumn reports the display column a PR title starts at, found by a word
+// from the title itself.
+func titleColumn(t *testing.T, line, word string) int {
+	t.Helper()
+	plain := ansi.Strip(line)
+	i := strings.Index(plain, word)
+	if i < 0 {
+		t.Fatalf("no title containing %q in %q", word, plain)
+	}
+	return runewidth.StringWidth(plain[:i])
+}
+
+// connectorColumn reports the display column a connector glyph sits at, with any
+// styling and hyperlinks stripped out.
+func connectorColumn(t *testing.T, line, glyph string) int {
+	t.Helper()
+	plain := ansi.Strip(line)
+	i := strings.Index(plain, glyph)
+	if i < 0 {
+		t.Fatalf("no %q connector in %q", glyph, plain)
+	}
+	return runewidth.StringWidth(plain[:i])
 }
 
 func TestChildrenSearchURL(t *testing.T) {
@@ -141,7 +251,7 @@ func TestActiveStopFollowsTheColumn(t *testing.T) {
 	a := columnApp()
 	a.cursor, a.col = 0, 0
 
-	for i, wantKind := range []string{stopTicket, stopChildren, stopPR, stopPR, stopSymphony} {
+	for i, wantKind := range []string{stopSymphony, stopRelation, stopTicket, stopPR, stopPR} {
 		a.col = i
 		stop, ok := a.activeStop()
 		if !ok {
@@ -152,9 +262,10 @@ func TestActiveStopFollowsTheColumn(t *testing.T) {
 		}
 	}
 
-	// An out-of-range column is clamped rather than panicking.
+	// An out-of-range column is clamped rather than panicking. The last stop is
+	// now the row's final pull request, since the PRs are drawn rightmost.
 	a.col = 99
-	if stop, ok := a.activeStop(); !ok || stop.kind != stopSymphony {
+	if stop, ok := a.activeStop(); !ok || stop.kind != stopPR {
 		t.Errorf("clamped stop = %+v ok=%v", stop, ok)
 	}
 }
@@ -165,7 +276,8 @@ func TestActiveColumnIsPainted(t *testing.T) {
 	lay := a.layout()
 	a.cursor = 0
 
-	for _, col := range []int{0, 1, 2, 4} {
+	// Symphony, relation, ticket and the first PR are all on the ticket line.
+	for _, col := range []int{0, 1, 2, 3} {
 		a.col = col
 		body, rowLine := a.buildBody(lay)
 		row := body[rowLine[0]]
@@ -180,7 +292,7 @@ func TestActiveColumnIsPainted(t *testing.T) {
 
 	// The second PR lives on the continuation line, so selecting it must paint
 	// that line and not the ticket line.
-	a.col = 3
+	a.col = 4
 	body, rowLine := a.buildBody(lay)
 	ticketLine, continuation := body[rowLine[0]], body[rowLine[0]+1]
 	if !strings.Contains(continuation, "#1091") {

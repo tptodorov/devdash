@@ -177,6 +177,8 @@ func TestNoRowOverflowsWithSelection(t *testing.T) {
 }
 
 // The CI and review badges are the readable form of GitHub's own status values.
+// Each is one glyph in a fixed slot, so they line up down the page, and each is
+// blank when there is nothing to say.
 func TestPRBadges(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -184,33 +186,41 @@ func TestPRBadges(t *testing.T) {
 		want    string
 		notWant string
 	}{
-		{name: "checks passing", pr: PullRequest{CI: "SUCCESS"}, want: nerdCheckIcons.success},
-		{name: "checks failing", pr: PullRequest{CI: "FAILURE"}, want: nerdCheckIcons.failure},
-		{name: "checks errored counts as failing", pr: PullRequest{CI: "ERROR"}, want: nerdCheckIcons.failure},
-		{name: "checks running", pr: PullRequest{CI: "PENDING"}, want: nerdCheckIcons.pending},
-		{name: "checks expected counts as running", pr: PullRequest{CI: "EXPECTED"}, want: nerdCheckIcons.pending},
-		{name: "no checks reported", pr: PullRequest{}, notWant: nerdCheckIcons.success},
+		{name: "checks passing", pr: PullRequest{CI: "SUCCESS"}, want: iconCheckPass},
+		{name: "checks failing", pr: PullRequest{CI: "FAILURE"}, want: iconCheckFail},
+		{name: "checks errored counts as failing", pr: PullRequest{CI: "ERROR"}, want: iconCheckFail},
+		{name: "checks running", pr: PullRequest{CI: "PENDING"}, want: iconCheckRun},
+		{name: "checks expected counts as running", pr: PullRequest{CI: "EXPECTED"}, want: iconCheckRun},
+		{name: "no checks reported", pr: PullRequest{}, notWant: iconCheckPass},
 
-		{name: "approved", pr: PullRequest{Review: "APPROVED"}, want: "rev✓"},
-		{name: "changes requested", pr: PullRequest{Review: "CHANGES_REQUESTED"}, want: "rev±"},
-		{name: "awaiting review", pr: PullRequest{Review: "REVIEW_REQUIRED"}, want: "rev?"},
-		{name: "no review reported", pr: PullRequest{}, notWant: "rev"},
+		{name: "approved", pr: PullRequest{Review: "APPROVED"}, want: iconApproved},
+		{name: "changes requested", pr: PullRequest{Review: "CHANGES_REQUESTED"}, want: iconChanges},
+		{
+			// Awaiting review is what a pull request is supposed to be, so the
+			// slot stays empty: only a deviation from that earns ink.
+			name: "awaiting review draws nothing",
+			pr:   PullRequest{Review: "REVIEW_REQUIRED"}, notWant: iconApproved,
+		},
+		{name: "no review reported", pr: PullRequest{}, notWant: iconChanges},
 		{
 			// GitHub reports no decision when the base branch requires none, so
 			// the approval count is what keeps a real approval visible. This is
 			// real: platform #1103 had one approval and no decision.
 			name: "approved with no decision reported",
-			pr:   PullRequest{Approvals: 1}, want: "rev✓",
+			pr:   PullRequest{Approvals: 1}, want: iconApproved,
 		},
 		{
 			name: "several approvals show the count",
-			pr:   PullRequest{Review: "APPROVED", Approvals: 3}, want: "rev✓3",
+			pr:   PullRequest{Review: "APPROVED", Approvals: 3}, want: iconApproved + "3",
 		},
 		{
 			name: "changes requested outranks an approval",
-			pr:   PullRequest{Review: "CHANGES_REQUESTED", Approvals: 1}, want: "rev±",
+			pr:   PullRequest{Review: "CHANGES_REQUESTED", Approvals: 1}, want: iconChanges,
 		},
-		// The state is carried by colour, never spelled out.
+		// The old rev✓ / rev± / rev? vocabulary spent five columns a row on what
+		// one glyph and a colour now carry.
+		{name: "the rev prefix is gone", pr: PullRequest{Review: "APPROVED"}, notWant: "rev"},
+		// The state is carried by colour and glyph shape, never spelled out.
 		{name: "draft is not a word", pr: PullRequest{Draft: true}, notWant: "draft"},
 	}
 
@@ -220,7 +230,7 @@ func TestPRBadges(t *testing.T) {
 			pr.Repo, pr.Number = "r", 1
 
 			var plain strings.Builder
-			for _, s := range prSegs(pr, 34, 0) {
+			for _, s := range prSegs(pr, 34, true, 0) {
 				plain.WriteString(s.text)
 			}
 			got := plain.String()
@@ -235,18 +245,20 @@ func TestPRBadges(t *testing.T) {
 	}
 }
 
-// The cell leads with the state icon, as workmux does: <state> repo #n <checks>.
+// The cell leads with the state glyph: <state> repo #n <checks> <review>. Colour
+// carries the state, and the glyph's shape carries only whether it is a draft.
 func TestPRStateIconLeadsTheCell(t *testing.T) {
 	tests := []struct {
 		name string
 		pr   PullRequest
 		want string
 	}{
-		{"open", PullRequest{State: "OPEN"}, nerdPRIcons.open},
-		{"draft", PullRequest{State: "OPEN", Draft: true}, nerdPRIcons.draft},
-		{"merged", PullRequest{State: "MERGED"}, nerdPRIcons.merged},
-		{"closed", PullRequest{State: "CLOSED"}, nerdPRIcons.closed},
-		{"closed draft reads as closed", PullRequest{State: "CLOSED", Draft: true}, nerdPRIcons.closed},
+		{"open", PullRequest{State: "OPEN"}, iconPR},
+		{"draft", PullRequest{State: "OPEN", Draft: true}, iconPRDraft},
+		{"merged", PullRequest{State: "MERGED"}, iconPR},
+		{"closed", PullRequest{State: "CLOSED"}, iconPR},
+		// A draft that was closed is still a draft in shape; the colour says closed.
+		{"closed draft stays hollow", PullRequest{State: "CLOSED", Draft: true}, iconPRDraft},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,7 +266,7 @@ func TestPRStateIconLeadsTheCell(t *testing.T) {
 			pr.Repo, pr.Number, pr.CI = "repo", 1, "SUCCESS"
 
 			var plain strings.Builder
-			for _, s := range prSegs(pr, 34, 0) {
+			for _, s := range prSegs(pr, 34, true, 0) {
 				plain.WriteString(s.text)
 			}
 			got := plain.String()
@@ -262,53 +274,31 @@ func TestPRStateIconLeadsTheCell(t *testing.T) {
 			if !strings.HasPrefix(got, tc.want+" ") {
 				t.Errorf("prSegs = %q, want it to start with %q", got, tc.want)
 			}
-			// The check icon trails the reference, not the other way round.
-			if strings.Index(got, nerdCheckIcons.success) < strings.Index(got, "repo #1") {
-				t.Errorf("check icon should follow the reference: %q", got)
+			// The check glyph trails the reference, not the other way round.
+			if strings.LastIndex(got, iconCheckPass) < strings.Index(got, "repo #1") {
+				t.Errorf("check glyph should follow the reference: %q", got)
 			}
 		})
 	}
-
-	// Every icon must be one display column, or every row shifts.
-	for name, g := range map[string]string{
-		"open": nerdPRIcons.open, "draft": nerdPRIcons.draft,
-		"merged": nerdPRIcons.merged, "closed": nerdPRIcons.closed,
-		"success": nerdCheckIcons.success, "failure": nerdCheckIcons.failure,
-		"pending": nerdCheckIcons.pending,
-		"fb-open": fallbackPRIcons.open, "fb-draft": fallbackPRIcons.draft,
-		"fb-merged": fallbackPRIcons.merged, "fb-closed": fallbackPRIcons.closed,
-		"fb-success": fallbackCheckIcons.success, "fb-failure": fallbackCheckIcons.failure,
-		"fb-pending": fallbackCheckIcons.pending,
-	} {
-		if w := runewidth.StringWidth(g); w != 1 {
-			t.Errorf("%s icon %q is %d columns, want 1", name, g, w)
-		}
-	}
 }
 
-// With nerd fonts off, the plain-Unicode set is used instead. Terminals without
-// a patched font would otherwise draw every icon as a blank box.
-func TestFallbackIconsWhenNerdFontDisabled(t *testing.T) {
-	useNerdFont = false
-	t.Cleanup(func() { useNerdFont = true })
+// Archived goes after the badge slots, so a PR in an archived repository cannot
+// push the checks and review glyphs out of the column they share with every
+// other row.
+func TestArchivedFollowsTheBadgeSlots(t *testing.T) {
+	pr := PullRequest{Repo: "repo", Number: 1, State: "OPEN", CI: "SUCCESS", Archived: true}
 
 	var plain strings.Builder
-	for _, s := range prSegs(PullRequest{Repo: "repo", Number: 1, State: "MERGED", CI: "FAILURE"}, 34, 0) {
+	for _, s := range prSegs(pr, 14, true, 0) {
 		plain.WriteString(s.text)
 	}
 	got := plain.String()
 
-	if !strings.Contains(got, fallbackPRIcons.merged) {
-		t.Errorf("prSegs = %q, want the fallback merged icon %q", got, fallbackPRIcons.merged)
+	if !strings.Contains(got, "archived") {
+		t.Fatalf("prSegs = %q, want it to mention archived", got)
 	}
-	if !strings.Contains(got, fallbackCheckIcons.failure) {
-		t.Errorf("prSegs = %q, want the fallback failure icon %q", got, fallbackCheckIcons.failure)
-	}
-	// No private-use codepoints may survive with nerd fonts off.
-	for _, r := range got {
-		if r >= 0xE000 && r <= 0xF8FF || r >= 0xF0000 {
-			t.Errorf("prSegs = %q, contains private-use rune U+%04X", got, r)
-		}
+	if strings.Index(got, "archived") < strings.LastIndex(got, iconCheckPass) {
+		t.Errorf("archived precedes the check slot, shifting it: %q", got)
 	}
 }
 
@@ -337,7 +327,7 @@ func TestPRStateColours(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			pr := tc.pr
 			pr.Repo, pr.Number = "repo", 1
-			rendered := segsRender(prSegs(pr, 34, 0), false)
+			rendered := segsRender(prSegs(pr, 34, true, 0), false)
 
 			if !strings.Contains(rendered, "38;5;"+tc.want+"m") {
 				t.Errorf("%s rendered %q, want foreground %s", tc.name, rendered, tc.want)
@@ -357,32 +347,58 @@ func TestPRStateColours(t *testing.T) {
 }
 
 // Every indicator must be exactly one display column. A glyph the width tables
-// consider wide would silently shift the PR column on every row.
+// consider wide would silently shift the PR column on every row, and since the
+// whole design is now plain Unicode there is no Nerd Font fallback to hide it.
+func TestEveryIndicatorIsOneColumn(t *testing.T) {
+	for name, g := range map[string]string{
+		"pr":         iconPR,
+		"pr draft":   iconPRDraft,
+		"check pass": iconCheckPass,
+		"check fail": iconCheckFail,
+		"check run":  iconCheckRun,
+		"approved":   iconApproved,
+		"changes":    iconChanges,
+		"symphony":   iconSymphony,
+		"alert":      iconAlert,
+		"child":      iconChild,
+		"subtask":    iconSubtask,
+		"branch":     prBranch,
+		"cursor":     selBar,
+	} {
+		if w := runewidth.StringWidth(g); w != 1 {
+			t.Errorf("%s indicator %q is %d columns, want 1", name, g, w)
+		}
+	}
+}
 
-// The block is always three characters, whatever the PR's state.
-
-// The old words must be gone, and the block must be far shorter than they were.
-
-// "devdash help -no-nerd-font" must describe the plain set, not the glyphs it is
-// being asked to avoid. Help runs before flag.Parse, so this is easy to get wrong.
-func TestHelpHonoursNoNerdFontFlag(t *testing.T) {
-	t.Cleanup(func() { useNerdFont = true })
-
-	useNerdFont = true
-	applyHelpFlags([]string{"-no-nerd-font"})
-	if useNerdFont {
-		t.Error("applyHelpFlags did not turn nerd fonts off")
+// Nothing devdash draws may need a patched font: a private-use codepoint would
+// render as a blank box for anyone without one.
+func TestNoPrivateUseCodepoints(t *testing.T) {
+	var plain strings.Builder
+	for _, pr := range []PullRequest{
+		{Repo: "repo", Number: 1, State: "OPEN", CI: "SUCCESS", Review: "APPROVED"},
+		{Repo: "repo", Number: 2, State: "OPEN", Draft: true, CI: "FAILURE"},
+		{Repo: "repo", Number: 3, State: "MERGED", CI: "PENDING", Review: "CHANGES_REQUESTED"},
+		{Repo: "repo", Number: 4, State: "CLOSED", Archived: true},
+	} {
+		for _, s := range prSegs(pr, 34, true, 0) {
+			plain.WriteString(s.text)
+		}
+	}
+	for _, state := range []string{
+		SymphonyScheduled, SymphonyRunning, SymphonyRetrying, SymphonyBlocked,
+	} {
+		marker, _ := symphonyMarker(state)
+		plain.WriteString(marker)
+	}
+	for _, a := range []attention{attnNone, attnMerge, attnChanges, attnAlert} {
+		marker, _ := a.marker()
+		plain.WriteString(marker)
 	}
 
-	useNerdFont = true
-	applyHelpFlags([]string{"--no-nerd-font"})
-	if useNerdFont {
-		t.Error("applyHelpFlags ignored the double-dash form")
-	}
-
-	useNerdFont = true
-	applyHelpFlags([]string{"-once", "-all-repos"})
-	if !useNerdFont {
-		t.Error("applyHelpFlags turned nerd fonts off for an unrelated flag")
+	for _, r := range plain.String() {
+		if r >= 0xE000 && r <= 0xF8FF || r >= 0xF0000 {
+			t.Errorf("indicator set contains private-use rune U+%04X", r)
+		}
 	}
 }
