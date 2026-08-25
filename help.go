@@ -13,17 +13,6 @@ var helpTopics = map[string]bool{
 	"help": true, "-h": true, "-help": true, "--help": true,
 }
 
-// applyHelpFlags honours the flags that change what the help text should show.
-// Help is handled before flag.Parse, so without this "devdash help -no-nerd-font"
-// would print the glyphs it is being asked to avoid.
-func applyHelpFlags(args []string) {
-	for _, a := range args {
-		if a == "-no-nerd-font" || a == "--no-nerd-font" {
-			useNerdFont = false
-		}
-	}
-}
-
 func section(w io.Writer, name string) {
 	fmt.Fprintf(w, "\n%s\n", titleStyle.Render(name))
 }
@@ -105,40 +94,69 @@ func writeHelp(w io.Writer) {
 		{"S", "schedule the ticket for Symphony, or take it back unless an agent is running"},
 		{"r", "refresh now"},
 		{"a", "pause or resume the automatic refresh"},
-		{"?", "keys, columns and the issue types currently on screen"},
+		{"?", "keys, columns and every indicator explained"},
 		{"q, esc, ctrl+c", "quit"},
 	} {
 		row(w, k[0], k[1])
 	}
 
 	section(w, "COLUMN NAVIGATION")
-	prose(w, "Left and right walk the columns of the selected row. The active one is")
-	prose(w, "highlighted in a contrasting colour; enter opens what it points at:")
+	prose(w, "Left and right walk the columns of the selected row, in the order they are")
+	prose(w, "drawn. The active one is highlighted in a contrasting colour; enter opens")
+	prose(w, "what it points at:")
 	prose(w, "")
-	row(w, "ticket", "the ticket in JIRA")
-	row(w, "children", "a JIRA search for its sub-tickets")
-	row(w, "pull request", "that pull request; each one on the row is its own column")
 	row(w, "Symphony", "the Symphony dashboard")
+	row(w, "relation", "a JIRA search for the ticket's sub-tickets")
+	row(w, "ticket", "the ticket in JIRA")
+	row(w, "pull request", "that pull request; each one on the row is its own column")
 	prose(w, "")
 	prose(w, "Columns appear only when they do on screen, so left and right never land")
-	prose(w, "somewhere that would do nothing.")
+	prose(w, "somewhere that would do nothing. A sub-task's "+iconSubtask+" is not a stop: the ticket")
+	prose(w, "does not carry its parent's key, so there is nothing to open.")
 
 	section(w, "COLUMNS")
-	row(w, "type", "initials of the issue type's words: Sub-task ST, New Feature NF")
-	row(w, "children", "sub-tickets whose parent is this ticket, blank when none")
+	row(w, "attention", "leftmost: the one thing this row wants from you, if anything")
+	row(w, "symphony", "what an agent is doing with the ticket, when one has it")
+	row(w, "relation", "+N sub-tickets, or "+iconSubtask+" when the ticket is itself a sub-task")
 	row(w, "ticket", "key and summary, hyperlinked to JIRA")
-	row(w, "pull request", "repo and number, coloured by state, with ci and review badges")
+	row(w, "pull request", "repo and number, coloured by state, then checks and review")
+	row(w, "PR title", "up to 30 columns, with the ticket key it repeats dropped")
+	prose(w, "")
+	prose(w, "Every column is as wide as its widest value and no wider, and a column with")
+	prose(w, "nothing in it disappears. The summary is the one that flexes: it takes")
+	prose(w, "whatever the terminal leaves, up to the longest summary loaded. A ticket's")
+	prose(w, "first PR shares its line; each further one gets a line of its own, marked")
+	prose(w, iconSubtask+" beneath it. A ticket with no pull request draws nothing there.")
+
+	section(w, "ATTENTION")
+	prose(w, "The leftmost column answers one question — is there something here for me —")
+	prose(w, "so the edge of the screen can be read on its own. A ticket takes the most")
+	prose(w, "urgent state of any of its pull requests:")
+	prose(w, "")
+	for _, s := range []struct {
+		a    attention
+		what string
+	}{
+		{attnMerge, "approved and green: merge it"},
+		{attnChanges, "changes requested: respond to the review"},
+		{attnAlert, "the build failed, or Symphony is blocked waiting on you"},
+	} {
+		marker, style := s.a.marker()
+		fmt.Fprintf(w, "  %s%s\n", style.Render(pad(marker, 22)), mutedStyle.Render(s.what))
+	}
 
 	section(w, "SYMPHONY")
-	prose(w, "Tickets Symphony has in hand, or has been given, are marked in a column of")
-	prose(w, "their own. Scheduled is grey because nothing is happening yet — Symphony")
-	prose(w, "polls, so a freshly scheduled ticket waits up to one interval:")
+	prose(w, "Tickets Symphony has in hand, or has been given, are marked at the left-hand")
+	prose(w, "edge, beside the attention marker. The note is the constant — it means")
+	prose(w, "Symphony has this ticket — and the colour says what it is doing with it.")
+	prose(w, "Scheduled is grey because nothing is happening yet: Symphony polls, so a")
+	prose(w, "freshly scheduled ticket waits up to one interval.")
 	prose(w, "")
 	for _, s := range []struct{ state, what string }{
-		{SymphonyScheduled, "scheduled, waiting for Symphony to pick it up"},
-		{SymphonyRunning, "Symphony is working on it"},
-		{SymphonyBlocked, "paused waiting for operator input or approval"},
-		{SymphonyRetrying, "waiting for the next retry window"},
+		{SymphonyScheduled, "grey: scheduled, waiting for Symphony to pick it up"},
+		{SymphonyRunning, "magenta: Symphony is working on it"},
+		{SymphonyRetrying, "yellow: waiting for the next retry window"},
+		{SymphonyBlocked, "red: paused waiting for operator input or approval"},
 	} {
 		marker, style := symphonyMarker(s.state)
 		fmt.Fprintf(w, "  %s%s\n", style.Render(pad(marker, 22)), mutedStyle.Render(s.what))
@@ -165,37 +183,46 @@ func writeHelp(w io.Writer) {
 	prose(w, "independently of this tool. If it is not running, nothing is shown and no")
 	prose(w, "error is reported — that is the ordinary case.")
 
-	section(w, "PULL REQUEST ICONS")
-	fmt.Fprintf(w, "  %s\n", faintStyle.Render(
-		"Nerd Font glyphs, matching workmux; -no-nerd-font swaps in plain Unicode"))
-	pi, ci := prIcons(), checkIcons()
-	row(w, pi.open, "open")
-	row(w, pi.draft, "draft")
-	row(w, pi.merged, "merged")
-	row(w, pi.closed, "closed without merging")
-	row(w, ci.success, "checks passing")
-	row(w, ci.failure, "checks failing")
-	row(w, ci.pending, "checks still running")
-	row(w, "rev✓", "approved; rev✓3 means three approving reviews")
-	row(w, "rev±", "changes requested")
-	row(w, "rev?", "awaiting review")
+	section(w, "CHECKS AND REVIEW")
+	prose(w, "Two fixed slots follow every pull request reference, checks then review, so")
+	prose(w, "they can be read as columns down the page. Each is blank when there is")
+	prose(w, "nothing to say: a pull request merely awaiting review is behaving normally,")
+	prose(w, "and only a deviation from that is worth the ink.")
+	prose(w, "")
+	// The two slots share the ✓ glyph and are told apart by position and colour,
+	// so the samples name their slot rather than standing on the glyph alone.
+	row(w, "checks "+iconCheckPass, "passing — drawn faintly, because passing is expected")
+	row(w, "checks "+iconCheckFail, "failing")
+	row(w, "checks "+iconCheckRun, "still running")
+	row(w, "review "+iconApproved, "approved; "+iconApproved+"3 means three approving reviews")
+	row(w, "review "+iconChanges, "changes requested")
+	prose(w, "")
+	prose(w, "The archived note follows both slots, so it cannot shift them out of line,")
+	prose(w, "and it is dropped on a terminal with no room for it:")
+	prose(w, "")
 	row(w, "archived", "the PR's repository is archived; only with -include-archived")
 
 	section(w, "PULL REQUEST STATE")
-	prose(w, "The state is carried by the colour of the reference itself:")
+	prose(w, "Colour carries the state, and a hollow glyph means the pull request is still")
+	prose(w, "a draft — a draft is not a fourth state but a flag on an open one, and a")
+	prose(w, "draft that was closed is closed:")
 	prose(w, "")
 	for _, s := range []struct {
 		pr   PullRequest
 		what string
 	}{
 		{PullRequest{State: "OPEN"}, "open"},
-		{PullRequest{State: "OPEN", Draft: true}, "draft"},
-		{PullRequest{State: "MERGED"}, "merged"},
-		{PullRequest{State: "CLOSED"}, "closed without merging"},
+		{PullRequest{State: "MERGED"}, "violet: merged"},
+		{PullRequest{State: "CLOSED"}, "red: closed without merging"},
+		{PullRequest{State: "OPEN", Draft: true}, "hollow: a draft, not offered for review yet"},
 	} {
+		icon, style := prStateIcon(s.pr)
 		fmt.Fprintf(w, "  %s%s\n",
-			prStateStyle(s.pr).Render(pad("repo #123", 22)), mutedStyle.Render(s.what))
+			style.Render(pad(icon+" repo #123", 22)), mutedStyle.Render(s.what))
 	}
+	prose(w, "")
+	prose(w, "Every glyph devdash draws is plain Unicode one column wide, so no Nerd Font")
+	prose(w, "is needed.")
 	prose(w, "")
 	prose(w, "Open pull requests are fetched, plus any merged in the last 30 days, so a")
 	prose(w, "ticket still open keeps showing the PR that did the work. Closed without")

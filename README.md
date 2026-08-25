@@ -51,8 +51,8 @@ devdash puts them on one line each. It also closes three gaps that cost real tim
   [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens)
 - **A GitHub token** with `repo` scope
 
-A [Nerd Font](https://www.nerdfonts.com/) is recommended for the pull request
-icons. Without one, run with `-no-nerd-font`.
+Every glyph devdash draws is plain Unicode, one column wide, so no special font
+is needed.
 
 ## Install
 
@@ -123,7 +123,7 @@ devdash -all-repos      # ignore the current repository, show everything
 | `S` | schedule the ticket for Symphony, or take it back unless an agent is running |
 | `r` | refresh now |
 | `a` | pause or resume the automatic refresh |
-| `?` | keys, icons, and the issue types currently on screen |
+| `?` | keys, columns, and every indicator explained |
 | `q`, `esc`, `ctrl+c` | quit |
 
 Ticket keys and PR references are OSC 8 hyperlinks — ⌘-click them in iTerm2,
@@ -132,66 +132,113 @@ Ghostty, WezTerm, Kitty or any terminal that supports links.
 ## Column navigation
 
 Left and right walk the columns of the selected row, which is highlighted in a
-contrasting colour. Enter opens whatever that column points
-at:
+contrasting colour, in the order the columns are drawn. Enter opens whatever the
+active one points at:
 
 | Column | `enter` opens |
 | ------ | ------------- |
-| ticket | the ticket in JIRA |
-| children | a JIRA search for its sub-tickets |
-| pull request | that pull request — each PR on the row is its own column |
 | Symphony | the Symphony dashboard |
+| relation | a JIRA search for its sub-tickets |
+| ticket | the ticket in JIRA |
+| pull request | that pull request — each PR on the row is its own column |
 
 ```
-  T   4 PROJ-455  Add a shared database registry  →   platform #1088 󰄴 rev✓ +1  ♪
-        │  └──────────────┬─────────────────┘             └──────┬──────┘      │
-        │                 │                                     │             │
-        └ children        └ ticket                               └ PR          └ Symphony
-                                                     the second PR is the next column,
-                                                     on the line below
+ ↩ ♪ +4 PROJ-455   Add a shared database registry  ● platform #1088  ✓  ✓2
+   │ │  │                                          │
+   │ │  │                                          └ pull request
+   │ │  └ ticket
+   │ └ relation
+   └ Symphony
 ```
 
 Columns appear only when they do on screen, so left and right never land
-somewhere that would do nothing: a ticket with no children, no PR and no Symphony
+somewhere that would do nothing: a ticket with no relation, no PR and no Symphony
 session has a single column. `o` still opens the ticket from anywhere on the row.
+A sub-task's `↳` is not a stop either — the ticket does not carry its parent's
+key, so there is nothing to open.
+
+## A ticket with several pull requests
+
+The first pull request shares the ticket's line. Every further one gets a line of
+its own, marked `↳` immediately left of the pull request cell, so a line carrying
+no ticket still reads as belonging to the ticket above it — and every reference
+lands in the same column, which is what lets the states be read straight down.
+Each keeps its own attention marker, so a pull request wanting something under one
+that does not still announces itself:
+
+```
+ ↩ ♪ +4 PROJ-455   Add a shared database registry  ● platform #1088  ✓  ✓2
+ ↩                                               ↳ ● platform #1091  ◷  ↩
+                                                 ↳ ● platform #1104  ✓
+```
+
+They are all one row: `↑`/`↓` steps over the group, `←`/`→` walks into each PR in
+turn, selecting the ticket highlights every line, and `c` copies all three links.
 
 ## Reading a row
 
 ```
-  ST    PROJ-475   Add account identifiers to each database   →   platform #1103 󰄴 rev✓   ♪
-  │  │  │          │                                              │          │  │       │
-  │  │  │          └ summary                                      │          │  │       └ Symphony
-  │  │  └ ticket key, linked to JIRA                              │          │  └ review
-  │  └ sub-tickets, blank when none                               │          └ checks
-  └ issue type                                                    └ pull request, linked
+ ✓    ↳ PROJ-475   Add account identifiers         ● platform #1103  ✓  ✓2
+ │    │ │          │                               │ │               │
+ │    │ │          │                               │ │               └ checks, then review
+ │    │ │          │                               │ └ repo and number, linked
+ │    │ │          │                               └ state: ● open, ○ draft; colour says merged or closed
+ │    │ │          └ summary
+ │    │ └ ticket key, linked to JIRA
+ │    └ relation: +N sub-tickets, or ↳ a sub-task
+ └ attention
 ```
 
-**Issue type** is the initial of each word in the type's name: `Task` → `T`,
-`Sub-task` → `ST`, `New Feature` → `NF`. Nothing is hard-coded, so it works on any
-project's workflow. The `?` help lists the codes actually on screen, which is also
-where you can see if two types happen to share one.
+Every column is sized to its contents. The relation, key and pull request
+reference columns fit the widest value on screen, so they line up down the page
+and cost nothing they do not use, and any column with nothing in it disappears. The PR title is capped at 30 columns, since it
+only describes a pull request the row already names.
 
-**Pull requests** show state, checks and review:
+The summary is the column that flexes: it takes whatever the terminal leaves, up
+to the longest summary loaded, so a wide terminal spends its room on the ticket
+descriptions rather than on padding. Squeeze the window and the summary gives way
+first, then the title collapses, then the reference. Anything longer than its
+column is cut with an `…` — the ticket itself is one `enter` away.
 
-| | Nerd Font | Plain | Meaning |
-| --- | --- | --- | --- |
-| state | `\uf407` | `●` | open |
-| | `\uf4dd` | `○` | draft |
-| | `\uf419` | `◆` | merged |
-| | `\uf4dc` | `×` | closed without merging |
-| checks | `\U000f0134` | `✓` | passing |
-| | `\U000f0159` | `×` | failing |
-| | `\U000f051f` | `◷` | still running |
+The PR title drops the ticket key it conventionally opens with, since the row
+already carries it.
 
-The icons match [workmux](https://github.com/raine/workmux), so the two read the
-same way side by side. The reference is also coloured by state, so it still reads
-if a glyph cannot be drawn.
+**The leftmost column is the one to read first.** It answers a single question —
+is there something here for me — so the edge of the screen can be scanned on its
+own. A ticket takes the most urgent state of any of its pull requests, and the
+header counts them: `3 need you`.
 
-| Review badge | Meaning |
+| Marker | Meaning |
 | --- | --- |
-| `rev✓` | approved; `rev✓3` means three approving reviews |
-| `rev±` | changes requested |
-| `rev?` | awaiting review |
+| `✓` | approved and green: merge it |
+| `↩` | changes requested: respond to the review |
+| `!` | the build failed, or Symphony is blocked waiting on you |
+| blank | this row wants nothing from you |
+
+**Relation** is `+N` when a ticket has N sub-tickets, or `↳` when it is itself a
+sub-task. The two cannot both apply — JIRA forbids sub-tasks of sub-tasks — so one
+column carries both.
+
+**Pull requests** are one glyph coloured by state, then two fixed slots for checks
+and review. Holding the slots in place is what lets them be read as columns down
+the page:
+
+| | Glyph | Meaning |
+| --- | --- | --- |
+| state | `●` | open |
+| | `●` violet | merged |
+| | `●` red | closed without merging |
+| | `○` | a draft — hollow, because a draft is a flag on an open PR, not a state of its own |
+| checks | `✓` | passing — drawn faintly, because passing is expected |
+| | `✗` | failing |
+| | `◷` | still running |
+| review | `✓` | approved; `✓3` means three approving reviews |
+| | `↩` | changes requested |
+
+Each slot is blank when there is nothing to say. A pull request merely awaiting
+review is behaving normally, so it draws nothing: only a deviation earns ink. The
+reference beside the glyph is coloured to match, so a merged PR is a run of violet
+rather than a single tinted dot.
 
 Tickets are grouped by status, most urgent first, and each group is coloured.
 
@@ -243,14 +290,16 @@ their links. Nothing that goes stale is included — no status, no CI state.
 ## Symphony (optional)
 
 Tickets that a local [Symphony](https://github.com/openai/symphony) has in hand,
-or has been given, are marked in a column at the right-hand edge:
+or has been given, are marked in a column at the left-hand edge, beside the
+attention marker. The note is the constant — it means Symphony has this ticket —
+and the colour says what Symphony is doing with it:
 
 | Marker | Meaning |
 | --- | --- |
 | `♪` grey | scheduled, waiting for Symphony to pick it up |
-| `♪` | Symphony is working on the ticket |
-| `!` | paused waiting for operator input or approval |
-| `↻` | waiting for the next retry window |
+| `♪` magenta | Symphony is working on the ticket |
+| `♪` yellow | waiting for the next retry window |
+| `♪` red | paused waiting for operator input or approval |
 
 `S` toggles. On a ticket Symphony would pick up it strips the required labels
 again, which is enough to release the ticket: Symphony re-reads the labels before
@@ -284,7 +333,6 @@ nothing is reported — that is the ordinary case.
 | `-jql` | JQL selecting which tickets to show | `DEVDASH_JQL` | assigned to you, not Done |
 | `-pr-query` | GitHub search selecting which pull requests to show; overrides repo scoping | `DEVDASH_PR_QUERY` | open and recently merged, scoped to this repo |
 | `-include-archived` | keep pull requests whose repository is archived | — | archived hidden |
-| `-no-nerd-font` | use plain Unicode instead of Nerd Font glyphs | — | Nerd Font glyphs |
 | `-no-links` | render plain text instead of OSC 8 terminal hyperlinks | — | hyperlinks on |
 
 There is also a `help` subcommand, which reports whether each required
@@ -292,7 +340,6 @@ environment variable is set and lists every API call the tool makes:
 
 ```bash
 devdash help
-devdash help -no-nerd-font    # describes the plain glyph set instead
 ```
 
 Scope it to a project or an organisation by overriding the queries:
@@ -339,8 +386,9 @@ answers an unauthenticated search with `200` and an empty list, so devdash verif
 your identity separately rather than reporting an empty backlog; an expired token
 shows as an explicit error.
 
-**Every icon is a blank box.** Your terminal font is not a Nerd Font. Run with
-`-no-nerd-font`, or install one.
+**An indicator is a blank box.** Your terminal font is missing one of the plain
+Unicode glyphs devdash uses. Any font with reasonable symbol coverage will do; no
+patched or Nerd Font is required.
 
 **A ticket shows `no PR` when you know there is one.** The key must appear in the
 PR's title or branch name. Check the spelling, and note that scoping to the current
@@ -374,9 +422,8 @@ go build -o devdash .
 python3 scripts/screenshot.py ./devdash docs/screenshot.png
 ```
 
-It needs a [Nerd Font](https://www.nerdfonts.com/) installed to draw the pull
-request glyphs. `TestDemoDataCoversEveryState` keeps the sample data covering
-everything the documentation claims to show.
+`TestDemoDataCoversEveryState` keeps the sample data covering everything the
+documentation claims to show.
 
 To see what `S` would do to every one of your tickets without changing anything:
 

@@ -84,19 +84,21 @@ func TestHeaderShowsRepoScope(t *testing.T) {
 	t.Run("unscoped names no repository", func(t *testing.T) {
 		a := newApp(118)
 		plain := ansi.Strip(a.headerView(a.layout()))
-		if !strings.Contains(plain, "1 PRs") || strings.Contains(plain, " in ") {
+		if !strings.Contains(plain, "1 PRs") || strings.Contains(plain, "platform") {
 			t.Errorf("header = %q, want no repository named", plain)
 		}
 	})
 
 	// Widest form first, then progressively shorter ones as the terminal narrows.
+	// The full URL is deliberately not among them: the name is a hyperlink either
+	// way, so spelling out github.com/ spent the header on nothing.
 	tests := []struct {
 		name  string
 		width int
 		want  string
 	}{
-		{name: "wide shows the full link", width: 118, want: "https://github.com/acme/platform"},
-		{name: "medium falls back to owner/name", width: 70, want: "acme/platform"},
+		{name: "wide shows owner/name", width: 118, want: "acme/platform"},
+		{name: "medium still shows owner/name", width: 70, want: "acme/platform"},
 		{name: "narrow falls back to the bare name", width: 64, want: "platform"},
 	}
 	for _, tc := range tests {
@@ -106,10 +108,10 @@ func TestHeaderShowsRepoScope(t *testing.T) {
 			a.prScopeURL = "https://github.com/acme/platform"
 
 			got := a.headerView(a.layout())
-			// Styling splits " in " and the name into separate spans, so compare
+			// Styling splits the gap and the name into separate spans, so compare
 			// the text the user actually sees.
-			if plain := ansi.Strip(got); !strings.Contains(plain, " in "+tc.want) {
-				t.Errorf("header at %d cols = %q, want it to contain %q", tc.width, plain, " in "+tc.want)
+			if plain := ansi.Strip(got); !strings.Contains(plain, "  "+tc.want+"  ") {
+				t.Errorf("header at %d cols = %q, want it to contain %q", tc.width, plain, tc.want)
 			}
 			// Whichever form is chosen, the line must still fit.
 			if w := lipgloss.Width(got); w > a.layout().width {
@@ -138,7 +140,7 @@ func TestHeaderRepoLink(t *testing.T) {
 	if strings.Contains(got, "\x1b]8;;") {
 		t.Errorf("header = %q, want no hyperlink escapes with links disabled", got)
 	}
-	if !strings.Contains(ansi.Strip(got), "https://github.com/acme/platform") {
+	if !strings.Contains(ansi.Strip(got), "acme/platform") {
 		t.Errorf("header = %q, want the repository still named as text", got)
 	}
 }

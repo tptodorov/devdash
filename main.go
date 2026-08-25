@@ -39,8 +39,6 @@ func main() {
 		"print a single snapshot and exit instead of running the interactive UI")
 	demo := flag.Bool("demo", false,
 		"show sample data instead of contacting JIRA or GitHub; needs no credentials")
-	noNerdFont := flag.Bool("no-nerd-font", false,
-		"use plain Unicode instead of Nerd Font glyphs for pull request icons")
 	includeArchived := flag.Bool("include-archived", false,
 		"keep pull requests whose repository is archived (hidden by default)")
 
@@ -50,7 +48,6 @@ func main() {
 	// above are already registered, so the help text can list their real
 	// defaults.
 	if len(os.Args) > 1 && helpTopics[os.Args[1]] {
-		applyHelpFlags(os.Args[2:])
 		writeHelp(os.Stdout)
 		return
 	}
@@ -65,8 +62,6 @@ func main() {
 	if interval > 0 && interval < minRefresh {
 		interval = minRefresh
 	}
-	useNerdFont = !*noNerdFont
-
 	a := newApp(*jql, "", interval, !*noLinks, *includeArchived)
 
 	if *demo {

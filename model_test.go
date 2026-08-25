@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"slices"
 	"testing"
+
+	"github.com/mattn/go-runewidth"
 )
 
 func TestTicketKeyFor(t *testing.T) {
@@ -237,55 +240,43 @@ func TestArchivedPRsAreNotCorrelated(t *testing.T) {
 	}
 }
 
-// typeCode is derived from the type name alone, with nothing hard-coded, so it
-// has to behave for issue types this tool has never seen.
-func TestTypeCode(t *testing.T) {
+// The relation column replaces the old type and children columns. +N and the
+// sub-task glyph are mutually exclusive — JIRA forbids sub-tasks of sub-tasks —
+// so one column carries both, and neither needs a legend to be read.
+func TestRelationText(t *testing.T) {
 	tests := []struct {
-		issueType string
-		want      string
+		name   string
+		ticket Ticket
+		want   string
 	}{
-		// Single words reduce to one initial.
-		{"Task", "T"},
-		{"Epic", "E"},
-		{"Story", "S"},
-		{"Bug", "B"},
-		{"Initiative", "I"},
-		// Hyphens, spaces, slashes and underscores all separate words.
-		{"Sub-task", "ST"},
-		{"New Feature", "NF"},
-		{"Change Request", "CR"},
-		{"Technical Debt", "TD"},
-		{"Bug/Defect", "BD"},
-		{"service_request", "SR"},
-		// Case is normalised upward.
-		{"subtask", "S"},
-		{"SUB-TASK", "ST"},
-		{"sub-task", "ST"},
-		{" epic ", "E"},
-		// Digits count as word characters.
-		{"L3 Escalation", "LE"},
-		{"2nd Line Support", "2LS"},
-		// Long names are capped so one type cannot widen every row.
-		{"Really Very Extremely Long Type Name", "RVEL"},
-		// Degenerate input still yields something printable.
-		{"", "·"},
-		{"---", "·"},
+		{"children are counted", Ticket{ChildCount: 4}, iconChild + "4"},
+		{"a three-digit count still renders", Ticket{ChildCount: 128}, iconChild + "128"},
+		{"a sub-task points at its parent", Ticket{IsSubtask: true}, iconSubtask},
+		{"an ordinary ticket says nothing", Ticket{}, ""},
+		// A parent that is somehow also flagged a sub-task shows the count: it is
+		// the actionable half, and there is nowhere to open a parent from anyway.
+		{"children win over the sub-task flag",
+			Ticket{ChildCount: 2, IsSubtask: true}, iconChild + "2"},
+		// A zero count is not a childless ticket saying "0", it is silence.
+		{"zero children is blank, not a zero", Ticket{ChildCount: 0}, ""},
 	}
 	for _, tc := range tests {
-		if got := typeCode(tc.issueType); got != tc.want {
-			t.Errorf("typeCode(%q) = %q, want %q", tc.issueType, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := relationText(tc.ticket); got != tc.want {
+				t.Errorf("relationText() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestTypeCodeNeverExceedsColumnCap(t *testing.T) {
-	types := []string{
-		"Task", "Sub-task", "A B C D E F G", "Extremely-Long-Hyphenated-Type-Name-Here", "",
-	}
-	for _, issueType := range types {
-		if got := typeCode(issueType); len([]rune(got)) > maxTypeCode {
-			t.Errorf("typeCode(%q) = %q, which is %d runes, over the %d cap",
-				issueType, got, len([]rune(got)), maxTypeCode)
+// One verbose ticket must not widen the column for every other row.
+func TestRelationTextFitsTheColumnCap(t *testing.T) {
+	for _, ticket := range []Ticket{
+		{ChildCount: 1}, {ChildCount: 999}, {IsSubtask: true}, {},
+	} {
+		if got := relationText(ticket); runewidth.StringWidth(got) > maxRelW {
+			t.Errorf("relationText(%+v) = %q, %d columns, over the %d cap",
+				ticket, got, runewidth.StringWidth(got), maxRelW)
 		}
 	}
 }
@@ -321,52 +312,68 @@ func TestApplyChildCountsIsCaseInsensitive(t *testing.T) {
 	}
 }
 
-// The child column collapses entirely when nothing has children, and widens to
-// fit the largest count when something does.
+// The relation column collapses entirely when no ticket has children and none is
+// a sub-task, and widens to fit the largest count when something does.
 func TestMeasureSizesColumnsToData(t *testing.T) {
 	tests := []struct {
-		name       string
-		tickets    []Ticket
-		wantTypeW  int
-		wantChildW int
-		wantKeyW   int
+		name         string
+		tickets      []Ticket
+		wantRelW     int
+		wantKeyW     int
+		wantSummaryW int
 	}{
 		{
-			name:       "no children collapses the column",
-			tickets:    []Ticket{{Key: "M-1", Type: "Task"}, {Key: "M-2", Type: "Bug"}},
-			wantTypeW:  1,
-			wantChildW: 0,
-			wantKeyW:   minKeyW,
+			name:     "no relations collapses the column",
+			tickets:  []Ticket{{Key: "M-1", Type: "Task"}, {Key: "M-2", Type: "Bug"}},
+			wantRelW: 0,
+			wantKeyW: minKeyW,
 		},
 		{
-			name: "widest type and widest count win",
+			name: "the widest count wins",
 			tickets: []Ticket{
-				{Key: "M-1", Type: "Task", ChildCount: 4},
-				{Key: "M-2", Type: "Sub-task"},
-				{Key: "M-3", Type: "Epic", ChildCount: 11},
+				{Key: "M-1", ChildCount: 4},
+				{Key: "M-2", IsSubtask: true},
+				{Key: "M-3", ChildCount: 11},
 			},
-			wantTypeW:  2,
-			wantChildW: 2,
-			wantKeyW:   minKeyW,
+			wantRelW: len("+11"),
+			wantKeyW: minKeyW,
 		},
 		{
-			name:       "three-digit counts widen the column",
-			tickets:    []Ticket{{Key: "M-1", Type: "New Feature Request", ChildCount: 100}},
-			wantTypeW:  3,
-			wantChildW: 3,
-			wantKeyW:   minKeyW,
+			name:     "three-digit counts widen the column",
+			tickets:  []Ticket{{Key: "M-1", ChildCount: 100}},
+			wantRelW: len("+100"),
+			wantKeyW: minKeyW,
+		},
+		{
+			// A sub-task glyph on its own is one column, so a view of nothing but
+			// sub-tasks does not pay for a count column it never uses.
+			name:     "sub-tasks alone need one column",
+			tickets:  []Ticket{{Key: "M-1", IsSubtask: true}, {Key: "M-2", IsSubtask: true}},
+			wantRelW: 1,
+			wantKeyW: minKeyW,
 		},
 		{
 			// A long project key must widen the column, or every row after it
 			// shifts right and the summary column stops lining up.
 			name: "long project keys widen the key column",
 			tickets: []Ticket{
-				{Key: "OPS-264", Type: "Standard Change"},
-				{Key: "LONGPROJ-308", Type: "Child Task", ChildCount: 7},
+				{Key: "OPS-264"},
+				{Key: "LONGPROJ-308", ChildCount: 7},
 			},
-			wantTypeW:  2,
-			wantChildW: 1,
-			wantKeyW:   len("LONGPROJ-308"),
+			wantRelW: len("+7"),
+			wantKeyW: len("LONGPROJ-308"),
+		},
+		{
+			// The summary column is sized from the data, so a view of short
+			// summaries does not leave a stretch of empty column.
+			name: "the longest summary sizes the summary column",
+			tickets: []Ticket{
+				{Key: "M-1", Summary: "short"},
+				{Key: "M-2", Summary: "a longer summary"},
+			},
+			wantRelW:     0,
+			wantKeyW:     minKeyW,
+			wantSummaryW: len("a longer summary"),
 		},
 	}
 	for _, tc := range tests {
@@ -374,7 +381,9 @@ func TestMeasureSizesColumnsToData(t *testing.T) {
 			a := &app{tickets: tc.tickets}
 			a.settle()
 			got := a.measure()
-			want := widths{typeW: tc.wantTypeW, childW: tc.wantChildW, keyW: tc.wantKeyW}
+			want := widths{
+				relW: tc.wantRelW, keyW: tc.wantKeyW, summaryW: tc.wantSummaryW,
+			}
 			if got != want {
 				t.Errorf("measure() = %+v, want %+v", got, want)
 			}
@@ -382,28 +391,156 @@ func TestMeasureSizesColumnsToData(t *testing.T) {
 	}
 }
 
-// The layout must never ask for more columns than the terminal has, or rows
-// wrap and the alignment collapses.
+// The pull request columns are measured the same way as the rest: from the data,
+// so a row's reference is never a column short of what it has to draw.
+func TestMeasureSizesPRColumnsToData(t *testing.T) {
+	a := &app{
+		tickets: []Ticket{{Key: "PROJ-1", Status: "To Do", Category: "To Do", Type: "Task"}},
+		prs: []PullRequest{
+			{Repo: "app", Number: 7, Title: "PROJ-1: short", State: "OPEN"},
+			// The widest reference: a long repo name and a big number.
+			{Repo: "platform-controller", Number: 10488, Title: "PROJ-1: a considerably longer title",
+				State: "OPEN", CI: "SUCCESS", Review: "APPROVED", Approvals: 3},
+		},
+	}
+	a.settle()
+	got := a.measure()
+
+	widest := a.groups[0].Tickets[0].PRs[1]
+	if want := runewidth.StringWidth(prLabel(widest)); got.refW != want {
+		t.Errorf("refW = %d, want %d, the widest reference on screen", got.refW, want)
+	}
+	// Measured after the ticket key is dropped, which is what gets drawn.
+	if want := len("a considerably longer title"); got.titleW != want {
+		t.Errorf("titleW = %d, want %d, the longest title without its key", got.titleW, want)
+	}
+	if got.archived {
+		t.Error("archived = true with no archived repository among the PRs")
+	}
+}
+
+// An orphan pull request puts its title in the summary column, so it has to size
+// that column too or the longest orphan title is the one that gets truncated.
+func TestMeasureSizesTheSummaryFromOrphanTitles(t *testing.T) {
+	const title = "a template repository with a notably long descriptive title"
+	a := &app{
+		tickets: []Ticket{{Key: "PROJ-1", Status: "To Do", Category: "To Do", Summary: "short"}},
+		prs:     []PullRequest{{Repo: "sandbox", Number: 5, Title: title, State: "OPEN"}},
+	}
+	a.settle()
+	if got := a.measure(); got.summaryW != len(title) {
+		t.Errorf("summaryW = %d, want %d, the orphan's title", got.summaryW, len(title))
+	}
+}
+
+// No layout may ask for more columns than the terminal has, or rows wrap and the
+// alignment of every row goes with them. When there is more content than room,
+// the columns must add up to the width exactly rather than stopping short.
 func TestComputeLayoutFitsWidth(t *testing.T) {
 	for _, width := range []int{20, 40, 60, 72, 80, 100, 120, 200} {
-		for _, typeW := range []int{1, 2, 4} {
-			for _, childW := range []int{0, 1, 4} {
-				lay := computeLayout(width, widths{typeW: typeW, childW: childW, keyW: minKeyW})
-				// prefix + summary + gap + connector + gap + pr
-				total := lay.prefix() + lay.summary + 5 + lay.pr
-				if total > lay.width {
-					t.Errorf("width %d type %d child %d: needs %d columns, have %d",
-						width, typeW, childW, total, lay.width)
-				}
-				if lay.summary < 10 || lay.pr < 18 {
-					t.Errorf("width %d type %d child %d: degenerate summary=%d pr=%d",
-						width, typeW, childW, lay.summary, lay.pr)
-				}
-				if lay.prColumn() >= lay.width {
-					t.Errorf("width %d type %d child %d: PR column starts at %d, off screen",
-						width, typeW, childW, lay.prColumn())
+		for _, relW := range []int{0, 1, 2, 4} {
+			for _, keyW := range []int{minKeyW, maxKeyW} {
+				for _, symW := range []int{0, 1} {
+					for _, archived := range []bool{false, true} {
+						for _, data := range []widths{
+							{},                                     // nothing loaded
+							{summaryW: 12, refW: 14, titleW: 8},    // everything short
+							{summaryW: 200, refW: 60, titleW: 200}, // everything oversized
+							{summaryW: 200, refW: 14, titleW: 40},  // a long summary
+							{summaryW: 12, refW: 14, titleW: 200},  // a long title
+						} {
+							data.relW, data.keyW, data.symW = relW, keyW, symW
+							data.archived = archived
+							lay := computeLayout(width, data)
+							where := fmt.Sprintf("width %d rel %d key %d sym %d arch %v data %+v",
+								width, relW, keyW, symW, archived, data)
+
+							// prefix + summary + gap + pr + gap + title + archived
+							total := lay.prefix() + 2 + lay.summary + lay.pr +
+								lay.titleBlock() + lay.archivedBlock()
+							if total > lay.width-1 {
+								t.Errorf("%s: columns total %d, over %d",
+									where, total, lay.width-1)
+							}
+							// Oversized content has to be spent to the last column.
+							if data.summaryW > lay.width && total != lay.width-1 {
+								t.Errorf("%s: columns total %d, want the full %d",
+									where, total, lay.width-1)
+							}
+							if lay.summary < minSummaryW || lay.ref < minRefW {
+								t.Errorf("%s: degenerate summary=%d ref=%d",
+									where, lay.summary, lay.ref)
+							}
+							if lay.prColumn() >= lay.width {
+								t.Errorf("%s: PR column starts at %d, off screen",
+									where, lay.prColumn())
+							}
+						}
+					}
 				}
 			}
 		}
+	}
+}
+
+// The summary is the column that flexes: it grows with the terminal up to the
+// longest summary loaded, and shrinks when the terminal cannot hold that.
+func TestSummaryColumnTakesTheSpareRoom(t *testing.T) {
+	const data = 120 // a summary longer than any of these terminals leave room for
+
+	narrow := computeLayout(80, widths{relW: 2, keyW: minKeyW, summaryW: data, refW: 14})
+	wide := computeLayout(200, widths{relW: 2, keyW: minKeyW, summaryW: data, refW: 14})
+	if narrow.summary >= wide.summary {
+		t.Errorf("summary did not grow with the terminal: %d at 80, %d at 200",
+			narrow.summary, wide.summary)
+	}
+	if wide.summary != data {
+		t.Errorf("summary = %d on a wide terminal, want the longest summary %d",
+			wide.summary, data)
+	}
+
+	// Never wider than its content, however much room there is.
+	short := computeLayout(200, widths{relW: 2, keyW: minKeyW, summaryW: 15, refW: 14})
+	if short.summary != 15 {
+		t.Errorf("summary = %d, want the 15 its content needs", short.summary)
+	}
+}
+
+// The reference and title columns fit their content: the reference so references
+// line up, the title capped, since it only describes a PR the row already names.
+func TestPRColumnsFitTheirContent(t *testing.T) {
+	tests := []struct {
+		name               string
+		refW, titleW       int
+		wantRef, wantTitle int
+	}{
+		{"both short", 14, 18, 14, 18},
+		{"a long title is capped", 14, 200, 14, maxTitleW},
+		{"a wide reference is capped", 200, 18, maxRefW, 18},
+		{"a narrow reference has a floor", 4, 18, minRefW, 18},
+		{"no titles, no column", 14, 0, 14, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			lay := computeLayout(200, widths{
+				relW: 2, keyW: minKeyW, summaryW: 40, refW: tc.refW, titleW: tc.titleW,
+			})
+			if lay.ref != tc.wantRef {
+				t.Errorf("ref = %d, want %d", lay.ref, tc.wantRef)
+			}
+			if lay.title != tc.wantTitle {
+				t.Errorf("title = %d, want %d", lay.title, tc.wantTitle)
+			}
+			// The cell is the reference plus the fixed badge tail, always.
+			if want := prCellWidth(lay.ref); lay.pr != want {
+				t.Errorf("pr = %d, want %d", lay.pr, want)
+			}
+		})
+	}
+
+	// A terminal with no room to spare drops the title rather than the summary.
+	tight := computeLayout(72, widths{relW: 2, keyW: minKeyW, summaryW: 200, refW: 14, titleW: 30})
+	if tight.title != 0 {
+		t.Errorf("title = %d on a tight terminal, want it collapsed", tight.title)
 	}
 }

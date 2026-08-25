@@ -15,7 +15,7 @@ import (
 // Column kinds that left/right can stop on.
 const (
 	stopTicket   = "ticket"
-	stopChildren = "children"
+	stopRelation = "relation"
 	stopPR       = "pr"
 	stopSymphony = "symphony"
 )
@@ -726,26 +726,29 @@ func (a *app) settle() {
 				s.prURLs = append(s.prURLs, pr.URL)
 			}
 
-			// Stops appear only where the column does, so the walk matches
-			// what is on screen.
-			s.stops = append(s.stops, rowStop{kind: stopTicket, url: t.URL, what: t.Key})
-			if t.ChildCount > 0 {
-				s.stops = append(s.stops, rowStop{
-					kind: stopChildren,
-					url:  childrenSearchURL(t.URL, t.Key),
-					what: fmt.Sprintf("%d sub-tickets of %s", t.ChildCount, t.Key),
-				})
-			}
-			for _, pr := range t.PRs {
-				s.stops = append(s.stops, rowStop{
-					kind: stopPR, url: pr.URL,
-					what: fmt.Sprintf("%s #%d", pr.Repo, pr.Number),
-				})
-			}
+			// Stops appear only where the column does, and in the order the
+			// columns are drawn, so the walk matches what is on screen. Symphony
+			// and the relation cell now sit left of the key, so they come first.
 			if t.Symphony != "" {
 				s.stops = append(s.stops, rowStop{
 					kind: stopSymphony, url: a.symphonyURL,
 					what: "the Symphony dashboard",
+				})
+			}
+			// A subtask's ↳ is decoration: there is nothing to open, because the
+			// ticket does not carry its parent's key. Only a child count is a stop.
+			if t.ChildCount > 0 {
+				s.stops = append(s.stops, rowStop{
+					kind: stopRelation,
+					url:  childrenSearchURL(t.URL, t.Key),
+					what: fmt.Sprintf("%d sub-tickets of %s", t.ChildCount, t.Key),
+				})
+			}
+			s.stops = append(s.stops, rowStop{kind: stopTicket, url: t.URL, what: t.Key})
+			for _, pr := range t.PRs {
+				s.stops = append(s.stops, rowStop{
+					kind: stopPR, url: pr.URL,
+					what: fmt.Sprintf("%s #%d", pr.Repo, pr.Number),
 				})
 			}
 			a.sel = append(a.sel, s)
@@ -814,25 +817,28 @@ func (a *app) statusText() string {
 	return faintStyle.Render(a.statusPlain())
 }
 
+func (a *app) notificationView(lay layout) string {
+	text, style := "", normalStyle
+	switch {
+	case a.flash != "":
+		text, style = "✓ "+a.flash, okStyle
+	case a.jiraErr != nil:
+		text, style = "! jira: "+a.jiraErr.Error(), errStyle
+	case a.ghErr != nil:
+		text, style = "! github: "+a.ghErr.Error(), errStyle
+	case a.jiraWarn != nil:
+		text, style = "~ jira: "+a.jiraWarn.Error(), warnStyle
+	default:
+		return ""
+	}
+	return style.Bold(true).Reverse(true).Render(trunc(" "+text+" ", lay.width))
+}
+
 func (a *app) View() string {
 	lay := a.layout()
 
-	var banners []string
-	if a.flash != "" {
-		banners = append(banners, okStyle.Render("  ✓ ")+normalStyle.Render(trunc(a.flash, lay.width-6)))
-	}
-	if a.jiraErr != nil {
-		banners = append(banners, errStyle.Render("  ! jira: ")+mutedStyle.Render(trunc(a.jiraErr.Error(), lay.width-12)))
-	}
-	if a.jiraWarn != nil {
-		banners = append(banners, warnStyle.Render("  ~ jira: ")+mutedStyle.Render(trunc(a.jiraWarn.Error(), lay.width-12)))
-	}
-	if a.ghErr != nil {
-		banners = append(banners, errStyle.Render("  ! github: ")+mutedStyle.Render(trunc(a.ghErr.Error(), lay.width-14)))
-	}
-
-	// header + blank + banners + body + blank + footer
-	bodyHeight := a.height - 4 - len(banners)
+	// header + notification + body + blank + footer
+	bodyHeight := a.height - 4
 	if bodyHeight < 3 {
 		bodyHeight = 3
 	}
@@ -865,8 +871,7 @@ func (a *app) View() string {
 	end := min(a.offset+bodyHeight, len(body))
 	visible := body[min(a.offset, len(body)):end]
 
-	out := []string{a.headerView(lay), ""}
-	out = append(out, banners...)
+	out := []string{a.headerView(lay), a.notificationView(lay)}
 	out = append(out, visible...)
 	if len(body) > bodyHeight {
 		out = append(out, faintStyle.Render(fmt.Sprintf("  … %d more", len(body)-end+a.offset)))

@@ -22,7 +22,7 @@ func TestSnapshotInDemoMode(t *testing.T) {
 
 	// The frame carries the header, every status group, and the correlated rows.
 	for _, want := range []string{
-		"DEVDASH", "AWAITING CR", "IN PROGRESS", "BACKLOG",
+		"devdash", "AWAITING CR", "IN PROGRESS", "BACKLOG",
 		"PROJ-482", "PROJ-455", "TEAM-1204",
 		"platform #1099", "platform #1103",
 		"PRS WITHOUT AN ACTIVE TICKET", "sandbox #5",
@@ -114,6 +114,29 @@ func TestDemoDataCoversEveryState(t *testing.T) {
 		}
 	}
 
+	// The attention column is the first thing read on the dashboard, so the demo
+	// has to exercise every marker or the screenshot understates it.
+	groups, orphans := build(tickets, prs)
+	seen := map[attention]bool{}
+	for _, g := range groups {
+		for _, tk := range g.Tickets {
+			seen[attentionFor(tk)] = true
+		}
+	}
+	for _, pr := range orphans {
+		seen[attentionForPR(pr)] = true
+	}
+	for want, name := range map[attention]string{
+		attnNone:    "nothing wanted",
+		attnMerge:   "ready to merge",
+		attnChanges: "changes requested",
+		attnAlert:   "failing or blocked",
+	} {
+		if !seen[want] {
+			t.Errorf("demo has no row in the %q attention state", name)
+		}
+	}
+
 	states := map[string]bool{}
 	var drafts, failing, pending, approved, changes int
 	for _, pr := range prs {
@@ -149,7 +172,6 @@ func TestDemoDataCoversEveryState(t *testing.T) {
 	}
 
 	// The screenshot shows a PR with no ticket; correlation must produce one.
-	_, orphans := build(tickets, prs)
 	if len(orphans) == 0 {
 		t.Error("demo produces no pull request without a ticket")
 	}

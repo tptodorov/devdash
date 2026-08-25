@@ -275,7 +275,7 @@ func TestSymphonyColumn(t *testing.T) {
 		}
 		body, _ := a.buildBody(a.layout())
 		for _, line := range body {
-			if strings.ContainsAny(line, symphonyIconRunning+symphonyIconBlocked+symphonyIconRetrying) {
+			if strings.Contains(line, iconSymphony) {
 				t.Errorf("unexpected marker with no sessions: %q", line)
 			}
 		}
@@ -285,9 +285,12 @@ func TestSymphonyColumn(t *testing.T) {
 		state string
 		want  string
 	}{
-		{SymphonyRunning, symphonyIconRunning},
-		{SymphonyBlocked, symphonyIconBlocked},
-		{SymphonyRetrying, symphonyIconRetrying},
+		// One glyph for every state: the note says Symphony has the ticket, and
+		// the colour is what says whether it is working, waiting or stuck.
+		{SymphonyRunning, iconSymphony},
+		{SymphonyBlocked, iconSymphony},
+		{SymphonyRetrying, iconSymphony},
+		{SymphonyScheduled, iconSymphony},
 	} {
 		t.Run("marks the row when "+tc.state, func(t *testing.T) {
 			a := newApp(tc.state)
@@ -306,16 +309,20 @@ func TestSymphonyColumn(t *testing.T) {
 				t.Errorf("PROJ-2 row should carry no marker: %q", unmarked)
 			}
 
-			// The column sits at the right-hand edge: the marker must be the last
-			// visible character on the row, after the pull request cell.
+			// The column sits at the left-hand edge, beside the attention marker
+			// and before the key. At the end of a cell of variable length it was
+			// the least noticeable thing on screen, which defeated the point of it.
 			plain := strings.TrimRight(ansi.Strip(marked), " ")
-			if !strings.HasSuffix(plain, tc.want) {
-				t.Errorf("marker is not the last thing on the row: %q", plain)
+			at := strings.Index(plain, tc.want)
+			if at < 0 {
+				t.Fatalf("no marker on the row: %q", plain)
 			}
-			if idx := strings.Index(plain, "no PR"); idx >= 0 {
-				if strings.Index(plain, tc.want) < idx {
-					t.Errorf("marker appears before the PR cell: %q", plain)
-				}
+			if key := strings.Index(plain, "PROJ-1"); at > key {
+				t.Errorf("marker at column %d is right of the key at %d: %q", at, key, plain)
+			}
+			if at > lay.prefix() {
+				t.Errorf("marker at column %d is outside the prefix (%d): %q",
+					at, lay.prefix(), plain)
 			}
 			// The column must not push rows off the edge.
 			for i, line := range body {
