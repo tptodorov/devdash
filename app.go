@@ -837,11 +837,13 @@ func (a *app) notificationView(lay layout) string {
 func (a *app) View() string {
 	lay := a.layout()
 
-	// header + notification + body + blank + footer
-	bodyHeight := a.height - 4
-	if bodyHeight < 3 {
-		bodyHeight = 3
-	}
+	// header + notification + body + blank + footer, with one row of
+	// headroom kept unused at the bottom. Bubble Tea's renderer mishandles
+	// the case where a frame fills the terminal exactly and a later frame
+	// is shorter: it can fail to erase the trailing rows of the taller
+	// frame, leaving stale content stuck at the bottom of the screen. Never
+	// touching the last row sidesteps that edge case entirely.
+	bodyHeight := max(a.height-5, 3)
 
 	var body []string
 	var rowLine []int
