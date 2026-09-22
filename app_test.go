@@ -1,0 +1,214 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+// fakeTracker is a Tracker whose Tickets() result is fixed, so tests can
+// exercise the multi-tracker merge without any network.
+type fakeTracker struct {
+	name    string
+	tickets []Ticket
+	err     error
+}
+
+func (f fakeTracker) Name() string { return f.name }
+func (f fakeTracker) Tickets(context.Context, string) ([]Ticket, error) {
+	return f.tickets, f.err
+}
+
+func TestFetchTicketsMergesEveryTracker(t *testing.T) {
+	trackers := []trackerSource{
+		{tracker: fakeTracker{name: "JIRA", tickets: []Ticket{{Key: "PROJ-1", Source: "JIRA"}}}},
+		{tracker: fakeTracker{name: "Linear", tickets: []Ticket{{Key: "ENG-1", Source: "Linear"}}}},
+	}
+
+	msg := fetchTickets(context.Background(), trackers, nil, nil)
+	if msg.err != nil {
+		t.Fatalf("err = %v", msg.err)
+	}
+	if len(msg.tickets) != 2 {
+		t.Fatalf("got %d tickets, want 2", len(msg.tickets))
+	}
+}
+
+func TestFetchTicketsPartialFailureIsAWarningNotAnError(t *testing.T) {
+	trackers := []trackerSource{
+		{tracker: fakeTracker{name: "JIRA", err: errors.New("boom")}},
+		{tracker: fakeTracker{name: "Linear", tickets: []Ticket{{Key: "ENG-1", Source: "Linear"}}}},
+	}
+
+	msg := fetchTickets(context.Background(), trackers, nil, nil)
+	if msg.err != nil {
+		t.Fatalf("err = %v, want nil: one working tracker should still show its tickets", msg.err)
+	}
+	if msg.warn == nil || !strings.Contains(msg.warn.Error(), "JIRA: boom") {
+		t.Errorf("warn = %v, want it to mention %q", msg.warn, "JIRA: boom")
+	}
+	if len(msg.tickets) != 1 || msg.tickets[0].Key != "ENG-1" {
+		t.Fatalf("tickets = %+v, want just the Linear ticket that succeeded", msg.tickets)
+	}
+}
+
+func TestFetchTicketsErrorsWhenEveryTrackerFails(t *testing.T) {
+	trackers := []trackerSource{
+		{tracker: fakeTracker{name: "JIRA", err: errors.New("boom")}},
+		{tracker: fakeTracker{name: "Linear", err: errors.New("bang")}},
+	}
+
+	msg := fetchTickets(context.Background(), trackers, nil, nil)
+	if msg.err == nil {
+		t.Fatal("want an error when every configured tracker fails")
+	}
+	if !strings.Contains(msg.err.Error(), "JIRA: boom") || !strings.Contains(msg.err.Error(), "Linear: bang") {
+		t.Errorf("err = %v, want it to name both failures", msg.err)
+	}
+}
+
+func TestFetchTicketsWithNoTrackersReturnsTheConfigError(t *testing.T) {
+	cfgErr := errors.New("no ticket tracker configured")
+
+	msg := fetchTickets(context.Background(), nil, nil, cfgErr)
+	if !errors.Is(msg.err, cfgErr) {
+		t.Errorf("err = %v, want %v", msg.err, cfgErr)
+	}
+}
+
+// Child counts are a JIRA-only enrichment: JIRA's parent/child hierarchy has
+// no equivalent for other trackers, so asking about it must never leak a
+// non-JIRA ticket's key into the JQL sent to JIRA.
+func TestFetchTicketsOnlyAsksJIRAAboutJIRATicketChildren(t *testing.T) {
+	var childQueries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jql := r.URL.Query().Get("jql")
+		if strings.Contains(jql, "parent in") {
+			childQueries = append(childQueries, jql)
+			io.WriteString(w, `{"issues":[]}`)
+			return
+		}
+		io.WriteString(w, `{"issues":[
+			{"key":"PROJ-1","fields":{"summary":"s","status":{"name":"Open","statusCategory":{"name":"To Do"}},"issuetype":{"name":"Task","subtask":false},"labels":[]}}
+		]}`)
+	}))
+	t.Cleanup(srv.Close)
+	jira := &jiraClient{baseURL: srv.URL, user: "u", token: "t", http: srv.Client()}
+
+	trackers := []trackerSource{
+		{tracker: jira, query: "project = PROJ"},
+		{tracker: fakeTracker{name: "Linear", tickets: []Ticket{{Key: "ENG-1", Source: "Linear"}}}},
+	}
+
+	msg := fetchTickets(context.Background(), trackers, jira, nil)
+	if msg.err != nil {
+		t.Fatalf("err = %v", msg.err)
+	}
+	if len(childQueries) != 1 {
+		t.Fatalf("made %d child-count queries, want 1", len(childQueries))
+	}
+	if !strings.Contains(childQueries[0], "PROJ-1") {
+		t.Errorf("child-count query = %q, want it to include PROJ-1", childQueries[0])
+	}
+	if strings.Contains(childQueries[0], "ENG-1") {
+		t.Errorf("child-count query = %q, should never mention the Linear ticket", childQueries[0])
+	}
+}
+
+// The status-change and Symphony-scheduling keys are JIRA workflows, so they
+// must refuse a ticket sourced from another tracker even while JIRA itself is
+// configured.
+func TestOpenPickerRefusesNonJIRATicket(t *testing.T) {
+	a := newAppForTest()
+	a.jira = &jiraClient{}
+	a.tickets = []Ticket{{Key: "ENG-1", Summary: "not a JIRA ticket", Status: "Todo", Category: "To Do", Source: "Linear"}}
+	a.settle()
+	a.cursor = 0
+
+	cmd := a.openPicker()
+	if cmd != nil {
+		t.Error("openPicker() should not start a fetch for a non-JIRA ticket")
+	}
+	if !strings.Contains(a.flash, "only supported for JIRA tickets") {
+		t.Errorf("flash = %q, want it to explain JIRA-only support", a.flash)
+	}
+}
+
+func TestScheduleForSymphonyRefusesNonJIRATicket(t *testing.T) {
+	a := newAppForTest()
+	a.jira = &jiraClient{}
+	a.tickets = []Ticket{{Key: "ENG-1", Summary: "not a JIRA ticket", Status: "Todo", Category: "To Do", Source: "Linear"}}
+	a.settle()
+	a.cursor = 0
+
+	cmd := a.scheduleForSymphony()
+	if cmd != nil {
+		t.Error("scheduleForSymphony() should not start a fetch for a non-JIRA ticket")
+	}
+	if !strings.Contains(a.flash, "only supported for JIRA tickets") {
+		t.Errorf("flash = %q, want it to explain JIRA-only support", a.flash)
+	}
+}
+
+func TestNewAppActivatesTrackersFromEnvironment(t *testing.T) {
+	for _, key := range []string{"JIRA_URL", "JIRA_USERNAME", "JIRA_API_TOKEN", "LINEAR_API_KEY"} {
+		t.Setenv(key, "")
+	}
+
+	t.Run("neither configured reports a config error", func(t *testing.T) {
+		a := newApp("", "", "", 0, true, false)
+		if len(a.trackers) != 0 {
+			t.Errorf("trackers = %+v, want none", a.trackers)
+		}
+		if a.trackerErr == nil {
+			t.Error("want a config error when no tracker is configured")
+		}
+	})
+
+	t.Run("JIRA alone activates just JIRA", func(t *testing.T) {
+		t.Setenv("JIRA_URL", "https://example.atlassian.net")
+		t.Setenv("JIRA_USERNAME", "me@example.com")
+		t.Setenv("JIRA_API_TOKEN", "tok")
+
+		a := newApp("", "", "", 0, true, false)
+		if len(a.trackers) != 1 || a.trackers[0].tracker.Name() != "JIRA" {
+			t.Errorf("trackers = %+v, want just JIRA", a.trackers)
+		}
+		if a.trackerErr != nil {
+			t.Errorf("trackerErr = %v, want nil", a.trackerErr)
+		}
+	})
+
+	t.Run("a partial JIRA group is a configuration error, not a silent opt-out", func(t *testing.T) {
+		t.Setenv("JIRA_URL", "https://example.atlassian.net")
+		t.Setenv("JIRA_USERNAME", "")
+		t.Setenv("JIRA_API_TOKEN", "")
+
+		a := newApp("", "", "", 0, true, false)
+		if len(a.trackers) != 0 {
+			t.Errorf("trackers = %+v, want none", a.trackers)
+		}
+		if a.trackerErr == nil {
+			t.Error("want an error explaining the incomplete JIRA_* group")
+		}
+	})
+
+	t.Run("both configured activates both", func(t *testing.T) {
+		t.Setenv("JIRA_URL", "https://example.atlassian.net")
+		t.Setenv("JIRA_USERNAME", "me@example.com")
+		t.Setenv("JIRA_API_TOKEN", "tok")
+		t.Setenv("LINEAR_API_KEY", "linear-tok")
+
+		a := newApp("", "", "", 0, true, false)
+		if len(a.trackers) != 2 {
+			t.Fatalf("trackers = %+v, want both JIRA and Linear", a.trackers)
+		}
+		if a.trackerErr != nil {
+			t.Errorf("trackerErr = %v, want nil", a.trackerErr)
+		}
+	})
+}

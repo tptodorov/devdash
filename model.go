@@ -6,24 +6,30 @@ import (
 	"strings"
 )
 
-// Ticket is a JIRA issue assigned to the current user, together with any pull
+// Ticket is an issue assigned to the current user, together with any pull
 // requests that reference it.
 type Ticket struct {
 	Key      string
 	Summary  string
 	Status   string
-	Category string // JIRA status category: "In Progress", "To Do", "Done"
+	Category string // status category: "In Progress", "To Do", "Done"
 	Type     string // the project's own issue type name, whatever it is
 	URL      string
 	Labels   []string
-	// IsSubtask comes from JIRA's own issuetype.subtask flag rather than the
-	// type's name, so it holds for any project's naming.
+	// IsSubtask comes from the tracker's own sub-task/sub-issue flag rather
+	// than the type's name, so it holds for any project's naming.
 	IsSubtask  bool
 	ChildCount int // issues whose parent is this ticket, any assignee
 	// Symphony is the state of the Symphony session working this ticket:
 	// running, blocked, retrying, or empty when Symphony is not on it.
 	Symphony string
 	PRs      []PullRequest
+	// Source names the Tracker this ticket came from, e.g. "JIRA" or
+	// "Linear". Write actions (status change, Symphony scheduling) are JIRA
+	// workflows with no equivalent wired up for other trackers, so they are
+	// gated on this field rather than on which trackers happen to be
+	// configured.
+	Source string
 }
 
 // childCandidates lists the tickets worth asking JIRA about children for. JIRA

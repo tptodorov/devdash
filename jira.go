@@ -23,6 +23,9 @@ type jiraClient struct {
 	http    *http.Client
 }
 
+// Name identifies this tracker in status and error messages.
+func (c *jiraClient) Name() string { return "JIRA" }
+
 func newJIRAClient(hc *http.Client) (*jiraClient, error) {
 	c := &jiraClient{
 		baseURL: strings.TrimRight(os.Getenv("JIRA_URL"), "/"),
@@ -158,6 +161,7 @@ func (c *jiraClient) Tickets(ctx context.Context, jql string) ([]Ticket, error) 
 				Labels:    issue.Fields.Labels,
 				IsSubtask: issue.Fields.IssueType.Subtask,
 				URL:       c.baseURL + "/browse/" + issue.Key,
+				Source:    c.Name(),
 			})
 		}
 		if parsed.NextPageToken == "" {

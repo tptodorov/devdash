@@ -1,7 +1,7 @@
 # devdash
 
-Your assigned JIRA tickets and the pull requests addressing them, on one page, in
-your terminal.
+Your assigned JIRA and Linear tickets and the pull requests addressing them, on
+one page, in your terminal.
 
 [![CI](https://github.com/tptodorov/devdash/actions/workflows/ci.yml/badge.svg)](https://github.com/tptodorov/devdash/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
@@ -18,7 +18,7 @@ above with sample data:
 go run github.com/tptodorov/devdash@latest -demo
 ```
 
-Once you have the four environment variables from [Configure](#configure), the
+Once you have the environment variables from [Configure](#configure), the
 same command shows your real tickets:
 
 ```bash
@@ -31,9 +31,10 @@ without adding a binary to your `PATH`. If you decide to keep it, see
 
 ## Why
 
-The state of your own work is spread across three places: the JIRA board says what
-is assigned to you, GitHub says which pull requests exist, and neither knows about
-the other. Reconciling them is a tab-switching exercise you repeat all day.
+The state of your own work is spread across three places: your issue tracker (JIRA,
+Linear, or both) says what is assigned to you, GitHub says which pull requests
+exist, and neither knows about the other. Reconciling them is a tab-switching
+exercise you repeat all day.
 
 devdash puts them on one line each. It also closes three gaps that cost real time:
 
@@ -42,13 +43,16 @@ devdash puts them on one line each. It also closes three gaps that cost real tim
 - **Approvals can be invisible.** GitHub reports no review decision when the base
   branch requires none, so an approved PR looks unreviewed. devdash counts
   approving reviews as well as reading the decision.
-- **Changing a ticket's status meant leaving the terminal.** Press `s`.
+- **Changing a ticket's status meant leaving the terminal.** Press `s` (JIRA
+  tickets; Linear is read-only for now).
 
 ## Requirements
 
 - **Go 1.25+** to install
-- **A JIRA API token** — create one at
-  [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens)
+- **A JIRA API token**, **a Linear API key**, or both — whichever trackers
+  have credentials set are shown together. Create a JIRA token at
+  [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens),
+  a Linear key under linear.app > Settings > Security & access
 - **A GitHub token** with `repo` scope
 
 Every glyph devdash draws is plain Unicode, one column wide, so no special font
@@ -69,12 +73,17 @@ GOBIN="$HOME/.local/bin" go install github.com/tptodorov/devdash@latest
 
 ## Configure
 
-Four environment variables. Add them to your shell profile:
+Set up JIRA, Linear, or both — devdash activates whichever tracker has its
+keys set, and shows both together if both are set. Add them to your shell
+profile:
 
 ```bash
 export JIRA_URL='https://your-org.atlassian.net'
 export JIRA_USERNAME='you@your-org.com'      # your Atlassian account email
 export JIRA_API_TOKEN='...'                  # from id.atlassian.com
+
+export LINEAR_API_KEY='...'                  # linear.app > Settings > Security & access
+
 export GITHUB_TOKEN='...'                    # a token with repo scope
 ```
 
@@ -138,8 +147,8 @@ active one points at:
 | Column | `enter` opens |
 | ------ | ------------- |
 | Symphony | the Symphony dashboard |
-| relation | a JIRA search for its sub-tickets |
-| ticket | the ticket in JIRA |
+| relation | a JIRA search for its sub-tickets (JIRA only) |
+| ticket | the ticket, in JIRA or Linear |
 | pull request | that pull request — each PR on the row is its own column |
 
 ```
@@ -184,7 +193,7 @@ turn, selecting the ticket highlights every line, and `c` copies all three links
  │    │ │          │                               │ └ repo and number, linked
  │    │ │          │                               └ state: ● open, ○ draft; colour says merged or closed
  │    │ │          └ summary
- │    │ └ ticket key, linked to JIRA
+ │    │ └ ticket key, linked to JIRA or Linear
  │    └ relation: +N sub-tickets, or ↳ a sub-task
  └ attention
 ```
@@ -244,8 +253,9 @@ Tickets are grouped by status, most urgent first, and each group is coloured.
 
 ## Changing a ticket's status
 
-Press `s`. The choices come from JIRA's transitions API for that specific issue,
-so they are exactly what your workflow permits from its current state.
+Press `s` on a JIRA ticket (Linear tickets are read-only for now). The choices
+come from JIRA's transitions API for that specific issue, so they are exactly
+what your workflow permits from its current state.
 
 ```
 ╭─ PROJ-482 ────────────────────────────────────────────╮
@@ -326,11 +336,12 @@ nothing is reported — that is the ordinary case.
 
 | Flag | What it does | Environment | Default |
 | ---- | ------------ | ----------- | ------- |
-| `-demo` | show sample data instead of contacting JIRA or GitHub; needs no credentials | — | real data |
+| `-demo` | show sample data instead of contacting any tracker or GitHub; needs no credentials | — | real data |
 | `-once` | print one snapshot and exit instead of running the interactive UI | — | interactive |
 | `-refresh` | auto-refresh interval, e.g. `30s` or `2m`; `0` disables it | `DEVDASH_REFRESH` | `10s`, minimum `2s` |
 | `-all-repos` | show pull requests from every repository, not just this directory's | — | scoped to this repo |
-| `-jql` | JQL selecting which tickets to show | `DEVDASH_JQL` | assigned to you, not Done |
+| `-jql` | JQL selecting which JIRA tickets to show | `DEVDASH_JQL` | assigned to you, not Done |
+| `-linear-query` | Linear `IssueFilter` (JSON) selecting which Linear tickets to show | `DEVDASH_LINEAR_QUERY` | assigned to you, not done |
 | `-pr-query` | GitHub search selecting which pull requests to show; overrides repo scoping | `DEVDASH_PR_QUERY` | open and recently merged, scoped to this repo |
 | `-include-archived` | keep pull requests whose repository is archived | — | archived hidden |
 | `-no-links` | render plain text instead of OSC 8 terminal hyperlinks | — | hyperlinks on |
@@ -346,6 +357,7 @@ Scope it to a project or an organisation by overriding the queries:
 
 ```bash
 devdash -jql 'assignee = currentUser() AND project = PROJ AND statusCategory != Done ORDER BY updated DESC'
+devdash -linear-query '{"team":{"key":{"eq":"ENG"}},"state":{"type":{"nin":["completed","canceled"]}}}'
 devdash -pr-query 'author:@me is:pr is:open org:your-org'
 ```
 
@@ -354,8 +366,9 @@ no state filtering — ask for closed PRs and you get them.
 
 ## How it works
 
-**Correlation.** A pull request attaches to a ticket when a JIRA key appears in its
-**title**, falling back to its **branch name**. PRs matching no active ticket are
+**Correlation.** A pull request attaches to a ticket when its key (JIRA's or
+Linear's — both look like `PROJ-123`) appears in its **title**, falling back to
+its **branch name**. PRs matching no active ticket are
 listed under their own heading rather than hidden, because they still need
 something from you.
 
@@ -372,9 +385,9 @@ follow renames, so searching the stale name silently matches nothing.
 **Archived repositories** are skipped. GitHub keeps returning their PRs forever,
 but they cannot be merged. `-include-archived` brings them back.
 
-**No external binaries** are needed for data. JIRA and GitHub are called over
-HTTPS. `pbcopy`/`xclip` and `open`/`xdg-open` are used only for the clipboard and
-the browser, and only when you press `c` or `enter`.
+**No external binaries** are needed for data. JIRA, Linear and GitHub are all
+called over HTTPS. `pbcopy`/`xclip` and `open`/`xdg-open` are used only for the
+clipboard and the browser, and only when you press `c` or `enter`.
 
 Nothing is written anywhere except the clipboard, and JIRA when you press `s`.
 

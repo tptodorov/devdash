@@ -1,5 +1,5 @@
-// Command devdash shows the JIRA tickets assigned to you alongside the pull
-// requests that address them, correlated on one page.
+// Command devdash shows the JIRA and Linear tickets assigned to you alongside
+// the pull requests that address them, correlated on one page.
 package main
 
 import (
@@ -29,6 +29,8 @@ func main() {
 		"auto-refresh interval, e.g. 10s or 2m; 0 disables auto-refresh")
 	jql := flag.String("jql", envOr("DEVDASH_JQL", DefaultJQL),
 		"JQL query selecting the tickets to show")
+	linearQuery := flag.String("linear-query", os.Getenv("DEVDASH_LINEAR_QUERY"),
+		"Linear issue filter (JSON) selecting the tickets to show; empty uses the default \"not done\" filter")
 	prQuery := flag.String("pr-query", os.Getenv("DEVDASH_PR_QUERY"),
 		"GitHub search query selecting the pull requests to show; overrides repo scoping")
 	allRepos := flag.Bool("all-repos", false,
@@ -38,7 +40,7 @@ func main() {
 	once := flag.Bool("once", false,
 		"print a single snapshot and exit instead of running the interactive UI")
 	demo := flag.Bool("demo", false,
-		"show sample data instead of contacting JIRA or GitHub; needs no credentials")
+		"show sample data instead of contacting any tracker or GitHub; needs no credentials")
 	includeArchived := flag.Bool("include-archived", false,
 		"keep pull requests whose repository is archived (hidden by default)")
 
@@ -62,7 +64,7 @@ func main() {
 	if interval > 0 && interval < minRefresh {
 		interval = minRefresh
 	}
-	a := newApp(*jql, "", interval, !*noLinks, *includeArchived)
+	a := newApp(*jql, *linearQuery, "", interval, !*noLinks, *includeArchived)
 
 	if *demo {
 		a.loadDemo()

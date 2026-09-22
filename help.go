@@ -36,14 +36,14 @@ func prose(w io.Writer, line string) {
 func writeHelp(w io.Writer) {
 	fmt.Fprintf(w, "%s — %s\n",
 		titleStyle.Render("devdash"),
-		mutedStyle.Render("your active JIRA tickets and the pull requests addressing them, on one page."))
+		mutedStyle.Render("your active tickets and the pull requests addressing them, on one page."))
 
 	section(w, "WHAT IT DOES")
 	for _, line := range []string{
-		"Fetches every JIRA issue assigned to you that has not reached the Done",
-		"status category, and every open pull request you authored, then correlates",
-		"them. A PR attaches to a ticket when a JIRA key appears in its title,",
-		"falling back to its branch name.",
+		"Fetches every issue assigned to you from JIRA, Linear, or both — whichever",
+		"has credentials configured — skipping anything already Done, and every open",
+		"pull request you authored, then correlates them. A PR attaches to a ticket",
+		"when its key appears in the PR's title, falling back to its branch name.",
 		"",
 		"Tickets are grouped by status, most urgent first, and colour coded. Pull",
 		"requests matching no active ticket are listed under their own heading",
@@ -56,12 +56,15 @@ func writeHelp(w io.Writer) {
 	}
 
 	section(w, "REQUIREMENTS")
+	prose(w, "At least one issue tracker, plus GitHub:")
+	prose(w, "")
 	fmt.Fprintf(w, "  %s\n", faintStyle.Render(
 		pad("environment variable", 23)+pad("purpose", 42)+"status"))
 	for _, req := range []struct{ name, purpose string }{
 		{"JIRA_URL", "e.g. https://your-org.atlassian.net"},
 		{"JIRA_USERNAME", "your Atlassian account email"},
 		{"JIRA_API_TOKEN", "id.atlassian.com > Security > API tokens"},
+		{"LINEAR_API_KEY", "linear.app > Settings > Security & access"},
 		{"GITHUB_TOKEN", "token with repo scope (or GH_TOKEN)"},
 	} {
 		fmt.Fprintf(w, "  %s%s%s\n",
@@ -69,7 +72,9 @@ func writeHelp(w io.Writer) {
 			mutedStyle.Render(pad(trunc(req.purpose, 40), 42)),
 			envStatus(req.name))
 	}
-	fmt.Fprintf(w, "\n  %s\n", faintStyle.Render("Both APIs are called directly over HTTPS. If you use the GitHub CLI:"))
+	fmt.Fprintf(w, "\n  %s\n", faintStyle.Render("Set the JIRA_* group, LINEAR_API_KEY, or both — every tracker with keys"))
+	fmt.Fprintf(w, "  %s\n", faintStyle.Render("set is shown. Every API is called directly over HTTPS. If you use the"))
+	fmt.Fprintf(w, "  %s\n", faintStyle.Render("GitHub CLI:"))
 	fmt.Fprintf(w, "  %s\n", mutedStyle.Render("export GITHUB_TOKEN=$(gh auth token)"))
 
 	section(w, "USAGE")
@@ -237,6 +242,13 @@ func writeHelp(w io.Writer) {
 		{"GET  /rest/api/3/myself", "confirms auth when the list comes back empty"},
 		{"GET  /rest/api/3/issue/{key}/transitions", "the statuses you may move to"},
 		{"POST /rest/api/3/issue/{key}/transitions", "applies a status change (only on s)"},
+	} {
+		fmt.Fprintf(w, "    %s%s\n", normalStyle.Render(pad(c[0], 42)), mutedStyle.Render(c[1]))
+	}
+
+	fmt.Fprintf(w, "\n  %s\n", faintStyle.Render("Linear, at api.linear.app/graphql"))
+	for _, c := range [][2]string{
+		{"POST /graphql", "the ticket list, filtered to what is assigned to you"},
 	} {
 		fmt.Fprintf(w, "    %s%s\n", normalStyle.Render(pad(c[0], 42)), mutedStyle.Render(c[1]))
 	}

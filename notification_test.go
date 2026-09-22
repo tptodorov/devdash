@@ -14,9 +14,9 @@ import (
 var reverseSGR = regexp.MustCompile("\\x1b\\[(?:[0-9]+;)*7(?:;[0-9]+)*m")
 
 func TestNotificationLinePriority(t *testing.T) {
-	jiraErr := errors.New("JIRA unavailable")
+	trackerErr := errors.New("JIRA unavailable")
 	ghErr := errors.New("GitHub unavailable")
-	jiraWarn := errors.New("child counts unavailable")
+	trackerWarn := errors.New("child counts unavailable")
 
 	tests := []struct {
 		name string
@@ -25,23 +25,23 @@ func TestNotificationLinePriority(t *testing.T) {
 	}{
 		{
 			name: "command feedback wins",
-			app:  app{flash: "copied PROJ-1", jiraErr: jiraErr, ghErr: ghErr, jiraWarn: jiraWarn},
+			app:  app{flash: "copied PROJ-1", trackerErr: trackerErr, ghErr: ghErr, trackerWarn: trackerWarn},
 			want: "✓ copied PROJ-1",
 		},
 		{
-			name: "JIRA error precedes GitHub error",
-			app:  app{jiraErr: jiraErr, ghErr: ghErr, jiraWarn: jiraWarn},
-			want: "! jira: JIRA unavailable",
+			name: "tracker error precedes GitHub error",
+			app:  app{trackerErr: trackerErr, ghErr: ghErr, trackerWarn: trackerWarn},
+			want: "! JIRA unavailable",
 		},
 		{
-			name: "GitHub error precedes JIRA warning",
-			app:  app{ghErr: ghErr, jiraWarn: jiraWarn},
+			name: "GitHub error precedes tracker warning",
+			app:  app{ghErr: ghErr, trackerWarn: trackerWarn},
 			want: "! github: GitHub unavailable",
 		},
 		{
-			name: "JIRA warning is the fallback",
-			app:  app{jiraWarn: jiraWarn},
-			want: "~ jira: child counts unavailable",
+			name: "tracker warning is the fallback",
+			app:  app{trackerWarn: trackerWarn},
+			want: "~ child counts unavailable",
 		},
 		{name: "nothing to report leaves the row blank", app: app{}, want: ""},
 	}
@@ -108,7 +108,7 @@ func TestExpiredCommandNotificationRestoresPersistentProblem(t *testing.T) {
 		width:      60,
 		flash:      "copied PROJ-1",
 		flashUntil: now.Add(-time.Second),
-		jiraErr:    errors.New("JIRA unavailable"),
+		trackerErr: errors.New("JIRA unavailable"),
 	}
 
 	a.Update(tickMsg(now))

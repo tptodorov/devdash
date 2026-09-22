@@ -32,7 +32,7 @@ func (a *app) snapshot(w io.Writer) error {
 	// Size the frame to the content so a snapshot is never truncated.
 	body, _ := a.buildBody(a.layout())
 	a.height = len(body) + 6
-	if a.jiraErr != nil {
+	if a.trackerErr != nil {
 		a.height++
 	}
 	if a.ghErr != nil {
@@ -42,7 +42,7 @@ func (a *app) snapshot(w io.Writer) error {
 	if _, err := fmt.Fprintln(w, a.View()); err != nil {
 		return err
 	}
-	if a.jiraErr != nil || a.ghErr != nil {
+	if a.trackerErr != nil || a.ghErr != nil {
 		return fmt.Errorf("one or more sources failed")
 	}
 	return nil
@@ -54,24 +54,9 @@ func (a *app) fetchOnce(ctx context.Context) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		if a.jira == nil {
-			return
-		}
-		tickets, err := a.jira.Tickets(ctx, a.jql)
-		a.tickets, a.jiraErr = tickets, err
-		if err != nil {
-			return
-		}
-		counts, warn := a.jira.ChildCounts(ctx, childCandidates(tickets))
-		if warn == nil {
-			applyChildCounts(a.tickets, counts)
-		} else {
-			a.jiraWarn = fmt.Errorf("child counts unavailable: %w", warn)
-		}
-		cwd, _ := os.Getwd()
-		info := symphonyLookup(ctx, cwd)
-		applySymphony(a.tickets, info)
-		a.symphonyURL = info.endpoint
+		msg := fetchTickets(ctx, a.trackers, a.jira, a.trackerErr)
+		a.tickets, a.trackerErr, a.trackerWarn, a.symphonyURL =
+			msg.tickets, msg.err, msg.warn, msg.symphonyURL
 	}()
 	go func() {
 		defer wg.Done()
