@@ -311,12 +311,14 @@ and the colour says what Symphony is doing with it:
 | `♪` yellow | waiting for the next retry window |
 | `♪` red | paused waiting for operator input or approval |
 
-`S` toggles. On a ticket Symphony would pick up it strips the required labels
-again, which is enough to release the ticket: Symphony re-reads the labels before
-it retries or reconsiders a blocked issue, so stuck work can be taken back, fixed,
-and scheduled afresh. Only a ticket an agent is actively running is refused, since
-removing a label cannot interrupt a turn already in progress — stop that session in
-Symphony instead. Unrelated labels and the ticket's status are left alone.
+`S` toggles, on a JIRA ticket (Linear has no Symphony equivalent, and pressing
+`S` on a Linear ticket flashes as much). On a ticket Symphony would pick up it
+strips the required labels again, which is enough to release the ticket:
+Symphony re-reads the labels before it retries or reconsiders a blocked issue,
+so stuck work can be taken back, fixed, and scheduled afresh. Only a ticket an
+agent is actively running is refused, since removing a label cannot interrupt
+a turn already in progress — stop that session in Symphony instead. Unrelated
+labels and the ticket's status are left alone.
 
 The instance is located from the `server` block of `WORKFLOW.md`'s front matter,
 searching upward from the working directory:
