@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeTracker is a Tracker whose Tickets() result is fixed, so tests can
@@ -69,6 +70,68 @@ func TestFetchTicketsErrorsWhenEveryTrackerFails(t *testing.T) {
 	if !strings.Contains(msg.err.Error(), "JIRA: boom") || !strings.Contains(msg.err.Error(), "Linear: bang") {
 		t.Errorf("err = %v, want it to name both failures", msg.err)
 	}
+}
+
+// A JIRA_* group that is only partially set is a configuration mistake that
+// must keep surfacing on every refresh, not just the one where it was first
+// discovered: once a working tracker's ticketsMsg lands, the unconditional
+// `a.trackerErr = msg.err` in Update must not erase it, because fetchTickets
+// folds the boot-time config error back into every result it produces.
+func TestTrackerCfgErrSurvivesRepeatedRefreshes(t *testing.T) {
+	a := newAppForTest()
+	a.trackerCfgErr = errors.New("JIRA: missing environment variables: JIRA_USERNAME, JIRA_API_TOKEN")
+	a.trackers = []trackerSource{
+		{tracker: fakeTracker{name: "Linear", tickets: []Ticket{{Key: "ENG-1", Source: "Linear"}}}},
+	}
+
+	for i := range 3 {
+		msg := fetchTickets(context.Background(), a.trackers, a.jira, a.trackerCfgErr)
+		a.Update(msg)
+		if a.trackerErr != nil {
+			t.Fatalf("refresh %d: trackerErr = %v, want nil (Linear succeeded)", i, a.trackerErr)
+		}
+		if a.trackerWarn == nil || !strings.Contains(a.trackerWarn.Error(), "JIRA_USERNAME") {
+			t.Fatalf("refresh %d: trackerWarn = %v, want the JIRA config mistake still surfaced", i, a.trackerWarn)
+		}
+	}
+}
+
+// The trackers loop must run every tracker concurrently rather than one after
+// another, since they all share a single fixed deadline (25s in production);
+// sequential fetches would double worst-case latency as more trackers are
+// added.
+func TestFetchTicketsRunsTrackersConcurrently(t *testing.T) {
+	const delay = 150 * time.Millisecond
+	slow := func(name string) trackerSource {
+		return trackerSource{tracker: slowTracker{name: name, delay: delay}}
+	}
+	trackers := []trackerSource{slow("JIRA"), slow("Linear")}
+
+	start := time.Now()
+	msg := fetchTickets(context.Background(), trackers, nil, nil)
+	elapsed := time.Since(start)
+
+	if msg.err != nil {
+		t.Fatalf("err = %v", msg.err)
+	}
+	if elapsed >= 2*delay {
+		t.Errorf("fetchTickets took %v for two %v trackers, want them run concurrently (well under %v)", elapsed, delay, 2*delay)
+	}
+}
+
+type slowTracker struct {
+	name  string
+	delay time.Duration
+}
+
+func (s slowTracker) Name() string { return s.name }
+func (s slowTracker) Tickets(ctx context.Context, _ string) ([]Ticket, error) {
+	select {
+	case <-time.After(s.delay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return []Ticket{{Key: s.name + "-1", Source: s.name}}, nil
 }
 
 func TestFetchTicketsWithNoTrackersReturnsTheConfigError(t *testing.T) {

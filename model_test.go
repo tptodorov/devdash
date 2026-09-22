@@ -122,6 +122,41 @@ func TestBuildCorrelatesAndGroups(t *testing.T) {
 	}
 }
 
+// A key is only guaranteed unique within its own tracker: a JIRA project and
+// a Linear team can plausibly issue the same short code (e.g. during a
+// migration), so a PR matching that key must attach to every ticket sharing
+// it rather than silently overwriting one tracker's ticket with the other's.
+func TestBuildAttachesPRToEveryTicketSharingAKeyAcrossTrackers(t *testing.T) {
+	tickets := []Ticket{
+		{Key: "ENG-1", Source: "JIRA", Status: "To Do", Category: "To Do"},
+		{Key: "ENG-1", Source: "Linear", Status: "To Do", Category: "To Do"},
+	}
+	prs := []PullRequest{{Repo: "platform", Number: 1, Title: "ENG-1: shared code"}}
+
+	groups, orphans := build(tickets, prs)
+	if len(orphans) != 0 {
+		t.Fatalf("got %d orphans, want 0", len(orphans))
+	}
+
+	var jiraPRs, linearPRs int
+	for _, g := range groups {
+		for _, tk := range g.Tickets {
+			switch tk.Source {
+			case "JIRA":
+				jiraPRs = len(tk.PRs)
+			case "Linear":
+				linearPRs = len(tk.PRs)
+			}
+		}
+	}
+	if jiraPRs != 1 {
+		t.Errorf("JIRA ticket got %d PRs, want 1 (collision must not drop it)", jiraPRs)
+	}
+	if linearPRs != 1 {
+		t.Errorf("Linear ticket got %d PRs, want 1 (collision must not drop it)", linearPRs)
+	}
+}
+
 func TestBuildTreatsTicketKeyCaseInsensitively(t *testing.T) {
 	tickets := []Ticket{{Key: "proj-42", Status: "To Do", Category: "To Do"}}
 	prs := []PullRequest{{Repo: "platform", Number: 1, Title: "PROJ-42: work"}}
