@@ -141,16 +141,23 @@ func rankFor(status, category string) (int, int) {
 // status. Pull requests that do not map onto an active ticket are returned
 // separately so they stay visible instead of being silently dropped.
 func build(tickets []Ticket, prs []PullRequest) ([]group, []PullRequest) {
-	byKey := make(map[string]int, len(tickets))
+	// A key is only guaranteed unique within its own tracker, so two trackers
+	// issuing the same key (e.g. a JIRA project and a Linear team sharing a
+	// short code) must not have one silently overwrite the other here; every
+	// ticket matching a key gets the pull request.
+	byKey := make(map[string][]int, len(tickets))
 	for i, t := range tickets {
-		byKey[strings.ToUpper(t.Key)] = i
+		key := strings.ToUpper(t.Key)
+		byKey[key] = append(byKey[key], i)
 	}
 
 	var orphans []PullRequest
 	for _, pr := range prs {
 		pr.Ticket = ticketKeyFor(pr)
-		if i, ok := byKey[strings.ToUpper(pr.Ticket)]; ok {
-			tickets[i].PRs = append(tickets[i].PRs, pr)
+		if idxs, ok := byKey[strings.ToUpper(pr.Ticket)]; ok {
+			for _, i := range idxs {
+				tickets[i].PRs = append(tickets[i].PRs, pr)
+			}
 			continue
 		}
 		orphans = append(orphans, pr)

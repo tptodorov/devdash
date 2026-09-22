@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -117,6 +118,11 @@ type app struct {
 	pendingGH      bool
 	lastFetch      time.Time
 	now            time.Time
+	// trackerCfgErr is a configuration problem found at startup, such as a
+	// JIRA_* group that is only partially set. It never changes once newApp
+	// returns, so it is handed to every fetch to fold into that fetch's
+	// result rather than being overwritten and lost after the first one.
+	trackerCfgErr error
 	// trackerErr and trackerWarn report the ticket fetch's outcome across
 	// every configured tracker: err when nothing came back at all (including
 	// "nothing is configured"), warn when some tickets loaded but part of the
@@ -202,6 +208,7 @@ func newApp(jql, linearQuery, ghQuery string, period time.Duration, hyperlinks, 
 	if len(a.trackers) == 0 && a.trackerErr == nil {
 		a.trackerErr = fmt.Errorf("no ticket tracker configured — set JIRA_URL, JIRA_USERNAME and JIRA_API_TOKEN, or LINEAR_API_KEY")
 	}
+	a.trackerCfgErr = a.trackerErr
 
 	if client, err := newGitHubClient(&http.Client{Timeout: 25 * time.Second}); err != nil {
 		a.ghCfg, a.ghErr = err, err
@@ -237,11 +244,11 @@ func (a *app) refresh() tea.Cmd {
 
 	if !a.pendingTickets {
 		a.pendingTickets = true
-		trackers, jira, trackerErr := a.trackers, a.jira, a.trackerErr
+		trackers, jira, cfgErr := a.trackers, a.jira, a.trackerCfgErr
 		cmds = append(cmds, func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 			defer cancel()
-			return fetchTickets(ctx, trackers, jira, trackerErr)
+			return fetchTickets(ctx, trackers, jira, cfgErr)
 		})
 	}
 
@@ -270,25 +277,42 @@ func (a *app) refresh() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// fetchTickets runs every tracker and merges the results into one message.
-// trackerErr is what to report when trackers is empty: a configuration
-// problem discovered at startup. A tracker that fails once others succeed is
-// a warning, not a fatal error, so the dashboard still shows what it could
-// reach.
-func fetchTickets(ctx context.Context, trackers []trackerSource, jira *jiraClient, trackerErr error) ticketsMsg {
+// fetchTickets runs every tracker concurrently and merges the results into
+// one message. cfgErr is a configuration problem discovered at startup, such
+// as a JIRA_* group that is only partially set; it never resolves on its own,
+// so it is folded into the result on every call rather than just the first:
+// it is what to report outright when trackers is empty, and a warning
+// otherwise so it keeps showing even once another tracker succeeds. A
+// tracker that fails once others succeed is likewise a warning, not a fatal
+// error, so the dashboard still shows what it could reach.
+func fetchTickets(ctx context.Context, trackers []trackerSource, jira *jiraClient, cfgErr error) ticketsMsg {
 	if len(trackers) == 0 {
-		return ticketsMsg{err: trackerErr}
+		return ticketsMsg{err: cfgErr}
 	}
+
+	results := make([][]Ticket, len(trackers))
+	errs := make([]error, len(trackers))
+	var wg sync.WaitGroup
+	wg.Add(len(trackers))
+	for i, src := range trackers {
+		go func(i int, src trackerSource) {
+			defer wg.Done()
+			results[i], errs[i] = src.tracker.Tickets(ctx, src.query)
+		}(i, src)
+	}
+	wg.Wait()
 
 	var tickets []Ticket
 	var problems []string
-	for _, src := range trackers {
-		ts, err := src.tracker.Tickets(ctx, src.query)
-		if err != nil {
-			problems = append(problems, src.tracker.Name()+": "+err.Error())
+	if cfgErr != nil {
+		problems = append(problems, cfgErr.Error())
+	}
+	for i, src := range trackers {
+		if errs[i] != nil {
+			problems = append(problems, src.tracker.Name()+": "+errs[i].Error())
 			continue
 		}
-		tickets = append(tickets, ts...)
+		tickets = append(tickets, results[i]...)
 	}
 	if len(tickets) == 0 && len(problems) > 0 {
 		return ticketsMsg{err: fmt.Errorf("%s", strings.Join(problems, "; "))}

@@ -54,7 +54,7 @@ func (a *app) fetchOnce(ctx context.Context) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		msg := fetchTickets(ctx, a.trackers, a.jira, a.trackerErr)
+		msg := fetchTickets(ctx, a.trackers, a.jira, a.trackerCfgErr)
 		a.tickets, a.trackerErr, a.trackerWarn, a.symphonyURL =
 			msg.tickets, msg.err, msg.warn, msg.symphonyURL
 	}()
