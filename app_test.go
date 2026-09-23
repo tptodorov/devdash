@@ -182,6 +182,55 @@ func TestFetchTicketsOnlyAsksJIRAAboutJIRATicketChildren(t *testing.T) {
 	}
 }
 
+// planSchedule's conditions (status and labels) carry no tracker component,
+// so a JIRA and a Linear ticket sharing a key (plausible during a JIRA-to-
+// Linear migration that keeps the same short code) can both satisfy them.
+// applySymphony's source scoping must hold at this fetchTickets integration
+// point, not just in its own unit tests, since a regression here would
+// silently show a Linear ticket as queued for work Symphony can never
+// actually perform on it.
+func TestFetchTicketsScopesSymphonyToJIRAAcrossATrackerKeyCollision(t *testing.T) {
+	t.Chdir(writeWorkflow(t, `---
+tracker:
+  provider:
+    project_key: ENG
+  required_labels:
+    - symphony-ready
+  active_states:
+    - To Do
+---
+`))
+
+	eligible := Ticket{Key: "ENG-1", Status: "To Do", Labels: []string{"symphony-ready"}}
+	jiraTicket, linearTicket := eligible, eligible
+	jiraTicket.Source, linearTicket.Source = "JIRA", "Linear"
+
+	trackers := []trackerSource{
+		{tracker: fakeTracker{name: "JIRA", tickets: []Ticket{jiraTicket}}},
+		{tracker: fakeTracker{name: "Linear", tickets: []Ticket{linearTicket}}},
+	}
+
+	msg := fetchTickets(context.Background(), trackers, nil, nil)
+	if msg.err != nil {
+		t.Fatalf("err = %v", msg.err)
+	}
+	if len(msg.tickets) != 2 {
+		t.Fatalf("got %d tickets, want 2", len(msg.tickets))
+	}
+	for _, tk := range msg.tickets {
+		switch tk.Source {
+		case "JIRA":
+			if tk.Symphony != SymphonyScheduled {
+				t.Errorf("JIRA ENG-1 Symphony = %q, want %q", tk.Symphony, SymphonyScheduled)
+			}
+		case "Linear":
+			if tk.Symphony != "" {
+				t.Errorf("Linear ENG-1 Symphony = %q, want empty: Symphony can never act on a non-JIRA ticket", tk.Symphony)
+			}
+		}
+	}
+}
+
 // The status-change and Symphony-scheduling keys are JIRA workflows, so they
 // must refuse a ticket sourced from another tracker even while JIRA itself is
 // configured.
