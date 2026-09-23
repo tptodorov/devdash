@@ -35,6 +35,7 @@ type selRow struct {
 	id        string
 	label     string // PROJ-17552, or "sandbox #5" for a PR with no ticket
 	ticketKey string // empty on rows that are only a pull request
+	source    string // the tracker that owns ticketKey; empty on rows that are only a pull request
 	summary   string
 	status    string
 	ticketURL string // empty on rows that are only a pull request
@@ -561,13 +562,17 @@ func (a *app) scheduleForSymphony() tea.Cmd {
 		a.setFlash("JIRA is not configured; cannot schedule")
 		return nil
 	}
-
-	ticket, found := a.ticketByKey(row.ticketKey)
-	if !found {
+	if row.source != a.jira.Name() {
+		a.setFlash("Symphony scheduling is only supported for JIRA tickets")
 		return nil
 	}
-	if ticket.Source != a.jira.Name() {
-		a.setFlash("Symphony scheduling is only supported for JIRA tickets")
+
+	// Resolved by the row's own source, not just a.jira.Name(): a key is only
+	// guaranteed unique within its own tracker, so another tracker's ticket
+	// sharing this key must never be picked up here instead of the one the
+	// cursor is actually on.
+	ticket, found := a.ticketByKey(row.ticketKey, row.source)
+	if !found {
 		return nil
 	}
 
@@ -601,12 +606,16 @@ func (a *app) scheduleForSymphony() tea.Cmd {
 	}
 }
 
-// ticketByKey finds a loaded ticket, which carries the labels and status the plan
-// is built from.
-func (a *app) ticketByKey(key string) (Ticket, bool) {
+// ticketByKey finds a loaded ticket from the given tracker, which carries the
+// labels and status the plan is built from. A key is only guaranteed unique
+// within its own tracker, so source must match alongside key: two trackers
+// can issue the same key (e.g. a JIRA project and a Linear team sharing a
+// short code), and a key-only match could silently resolve to the wrong
+// tracker's ticket.
+func (a *app) ticketByKey(key, source string) (Ticket, bool) {
 	for _, g := range a.groups {
 		for _, t := range g.Tickets {
-			if strings.EqualFold(t.Key, key) {
+			if t.Source == source && strings.EqualFold(t.Key, key) {
 				return t, true
 			}
 		}
@@ -649,7 +658,7 @@ func (a *app) openPicker() tea.Cmd {
 		a.setFlash("JIRA is not configured; cannot change status")
 		return nil
 	}
-	if ticket, found := a.ticketByKey(row.ticketKey); found && ticket.Source != a.jira.Name() {
+	if row.source != a.jira.Name() {
 		a.setFlash("changing status is only supported for JIRA tickets")
 		return nil
 	}
@@ -820,6 +829,7 @@ func (a *app) settle() {
 				id:        "ticket:" + t.Key,
 				label:     t.Key,
 				ticketKey: t.Key,
+				source:    t.Source,
 				summary:   t.Summary,
 				status:    t.Status,
 				ticketURL: t.URL,
