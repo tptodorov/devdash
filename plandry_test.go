@@ -34,7 +34,7 @@ func TestDryRunSchedulePlans(t *testing.T) {
 		t.Fatalf("tickets: %v", err)
 	}
 	// Live sessions decide whether a scheduled ticket can be taken back.
-	applySymphony(tickets, symphonyLookup(ctx, dir))
+	applySymphony(tickets, symphonyLookup(ctx, dir), jira.Name())
 	for _, tk := range tickets {
 		p := planToggle(cfg, tk)
 		switch {

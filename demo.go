@@ -92,8 +92,8 @@ func demoData() ([]Ticket, []PullRequest) {
 func (a *app) loadDemo() {
 	a.demo = true
 	a.jira, a.gh = nil, nil
-	a.jiraCfg, a.ghCfg = nil, nil
-	a.jiraErr, a.ghErr, a.jiraWarn = nil, nil, nil
+	a.trackers, a.ghCfg = nil, nil
+	a.trackerCfgErr, a.trackerErr, a.ghErr, a.trackerWarn = nil, nil, nil, nil
 	a.prScope = "acme/platform"
 	a.prScopeURL = "https://github.com/acme/platform"
 	a.tickets, a.prs = demoData()

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -75,12 +76,17 @@ func (s selRow) snippet() string {
 }
 
 type app struct {
-	jira    *jiraClient
-	jiraCfg error // deferred configuration error, surfaced in the UI
-	gh      *githubClient
-	ghCfg   error // deferred configuration error, surfaced in the UI
-	jql     string
-	ghQuery string
+	jira *jiraClient
+	// trackers holds every tracker with credentials configured, each paired
+	// with the query that selects its tickets. jira is also kept on its own
+	// because its write actions (status change, Symphony scheduling) have no
+	// equivalent on other trackers.
+	trackers    []trackerSource
+	gh          *githubClient
+	ghCfg       error // deferred configuration error, surfaced in the UI
+	jql         string
+	linearQuery string
+	ghQuery     string
 	// prScope names the repository the PR search is narrowed to, empty when it
 	// spans every repository. It is shown in the header so a narrowed list is
 	// never mistaken for the whole picture, hyperlinked to prScopeURL.
@@ -108,12 +114,21 @@ type app struct {
 	width  int
 	height int
 
-	pendingJIRA bool
-	pendingGH   bool
-	lastFetch   time.Time
-	now         time.Time
-	jiraErr     error
-	jiraWarn    error
+	pendingTickets bool
+	pendingGH      bool
+	lastFetch      time.Time
+	now            time.Time
+	// trackerCfgErr is a configuration problem found at startup, such as a
+	// JIRA_* group that is only partially set. It never changes once newApp
+	// returns, so it is handed to every fetch to fold into that fetch's
+	// result rather than being overwritten and lost after the first one.
+	trackerCfgErr error
+	// trackerErr and trackerWarn report the ticket fetch's outcome across
+	// every configured tracker: err when nothing came back at all (including
+	// "nothing is configured"), warn when some tickets loaded but part of the
+	// fetch — another tracker, or JIRA's child-count enrichment — failed.
+	trackerErr  error
+	trackerWarn error
 	ghErr       error
 	showHelp    bool
 
@@ -158,9 +173,10 @@ type scheduledMsg struct {
 
 type tickMsg time.Time
 
-func newApp(jql, ghQuery string, period time.Duration, hyperlinks, includeArchived bool) *app {
+func newApp(jql, linearQuery, ghQuery string, period time.Duration, hyperlinks, includeArchived bool) *app {
 	a := &app{
 		jql:             jql,
+		linearQuery:     linearQuery,
 		ghQuery:         ghQuery,
 		period:          period,
 		autoRefresh:     period > 0,
@@ -170,11 +186,29 @@ func newApp(jql, ghQuery string, period time.Duration, hyperlinks, includeArchiv
 		height:          30,
 		now:             time.Now(),
 	}
-	if client, err := newJIRAClient(&http.Client{Timeout: 25 * time.Second}); err != nil {
-		a.jiraCfg, a.jiraErr = err, err
+
+	hc := &http.Client{Timeout: 25 * time.Second}
+
+	if client, err := newJIRAClient(hc); err != nil {
+		// JIRA is optional once another tracker can carry the dashboard, but a
+		// JIRA_* group that is set and still wrong is a mistake worth
+		// surfacing rather than a silent opt-out.
+		if jiraConfigured() {
+			a.trackerErr = fmt.Errorf("JIRA: %w", err)
+		}
 	} else {
 		a.jira = client
+		a.trackers = append(a.trackers, trackerSource{client, jql})
 	}
+
+	if client, err := newLinearClient(hc); err == nil {
+		a.trackers = append(a.trackers, trackerSource{client, linearQuery})
+	}
+
+	if len(a.trackers) == 0 && a.trackerErr == nil {
+		a.trackerErr = fmt.Errorf("no ticket tracker configured — set JIRA_URL, JIRA_USERNAME and JIRA_API_TOKEN, or LINEAR_API_KEY")
+	}
+	a.trackerCfgErr = a.trackerErr
 
 	if client, err := newGitHubClient(&http.Client{Timeout: 25 * time.Second}); err != nil {
 		a.ghCfg, a.ghErr = err, err
@@ -182,6 +216,12 @@ func newApp(jql, ghQuery string, period time.Duration, hyperlinks, includeArchiv
 		a.gh = client
 	}
 	return a
+}
+
+// jiraConfigured reports whether any JIRA environment variable is set, to
+// tell "not using JIRA" apart from "meant to, but got it wrong."
+func jiraConfigured() bool {
+	return os.Getenv("JIRA_URL") != "" || os.Getenv("JIRA_USERNAME") != "" || os.Getenv("JIRA_API_TOKEN") != ""
 }
 
 func (a *app) Init() tea.Cmd {
@@ -192,44 +232,23 @@ func (a *app) tick() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
-func (a *app) loading() bool { return a.pendingJIRA || a.pendingGH }
+func (a *app) loading() bool { return a.pendingTickets || a.pendingGH }
 
-// refresh starts both fetches. Sources are independent, so a failure in one
-// still lets the other update.
+// refresh starts every fetch. Sources are independent, so a failure in one
+// still lets the others update.
 func (a *app) refresh() tea.Cmd {
 	if a.demo {
 		return nil // sample data, nothing to fetch
 	}
 	var cmds []tea.Cmd
 
-	if !a.pendingJIRA {
-		a.pendingJIRA = true
-		jira, jql, cfgErr := a.jira, a.jql, a.jiraCfg
+	if !a.pendingTickets {
+		a.pendingTickets = true
+		trackers, jira, cfgErr := a.trackers, a.jira, a.trackerCfgErr
 		cmds = append(cmds, func() tea.Msg {
-			if jira == nil {
-				return ticketsMsg{err: cfgErr}
-			}
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 			defer cancel()
-
-			tickets, err := jira.Tickets(ctx, jql)
-			if err != nil {
-				return ticketsMsg{err: err}
-			}
-
-			// Child counts are enrichment: if the query fails, still show the
-			// tickets and say the counts are missing.
-			counts, warn := jira.ChildCounts(ctx, childCandidates(tickets))
-			if warn == nil {
-				applyChildCounts(tickets, counts)
-			} else {
-				warn = fmt.Errorf("child counts unavailable: %w", warn)
-			}
-			// Symphony is rediscovered and queried on every refresh.
-			cwd, _ := os.Getwd()
-			info := symphonyLookup(ctx, cwd)
-			applySymphony(tickets, info)
-			return ticketsMsg{tickets: tickets, warn: warn, symphonyURL: info.endpoint}
+			return fetchTickets(ctx, trackers, jira, cfgErr)
 		})
 	}
 
@@ -256,6 +275,81 @@ func (a *app) refresh() tea.Cmd {
 	}
 
 	return tea.Batch(cmds...)
+}
+
+// fetchTickets runs every tracker concurrently and merges the results into
+// one message. cfgErr is a configuration problem discovered at startup, such
+// as a JIRA_* group that is only partially set; it never resolves on its own,
+// so it is folded into the result on every call rather than just the first:
+// it is what to report outright when trackers is empty, and a warning
+// otherwise so it keeps showing even once another tracker succeeds. A
+// tracker that fails once others succeed is likewise a warning, not a fatal
+// error, so the dashboard still shows what it could reach.
+func fetchTickets(ctx context.Context, trackers []trackerSource, jira *jiraClient, cfgErr error) ticketsMsg {
+	if len(trackers) == 0 {
+		return ticketsMsg{err: cfgErr}
+	}
+
+	results := make([][]Ticket, len(trackers))
+	errs := make([]error, len(trackers))
+	var wg sync.WaitGroup
+	wg.Add(len(trackers))
+	for i, src := range trackers {
+		go func(i int, src trackerSource) {
+			defer wg.Done()
+			results[i], errs[i] = src.tracker.Tickets(ctx, src.query)
+		}(i, src)
+	}
+	wg.Wait()
+
+	var tickets []Ticket
+	var problems []string
+	if cfgErr != nil {
+		problems = append(problems, cfgErr.Error())
+	}
+	for i, src := range trackers {
+		if errs[i] != nil {
+			problems = append(problems, src.tracker.Name()+": "+errs[i].Error())
+			continue
+		}
+		tickets = append(tickets, results[i]...)
+	}
+	if len(tickets) == 0 && len(problems) > 0 {
+		return ticketsMsg{err: fmt.Errorf("%s", strings.Join(problems, "; "))}
+	}
+	var warn error
+	if len(problems) > 0 {
+		warn = fmt.Errorf("%s", strings.Join(problems, "; "))
+	}
+
+	// Child counts are JIRA-only enrichment: JIRA's parent/child hierarchy has
+	// no equivalent query wired up for other trackers, so only its own
+	// tickets are asked about. A failure here is itself only enrichment: show
+	// the tickets and say the counts are missing.
+	if jira != nil {
+		var jiraTickets []Ticket
+		for _, t := range tickets {
+			if t.Source == jira.Name() {
+				jiraTickets = append(jiraTickets, t)
+			}
+		}
+		if counts, cErr := jira.ChildCounts(ctx, childCandidates(jiraTickets)); cErr == nil {
+			applyChildCounts(tickets, counts, jira.Name())
+		} else {
+			cErr = fmt.Errorf("child counts unavailable: %w", cErr)
+			if warn == nil {
+				warn = cErr
+			} else {
+				warn = fmt.Errorf("%s; %s", warn, cErr)
+			}
+		}
+	}
+
+	// Symphony is rediscovered and queried on every refresh.
+	cwd, _ := os.Getwd()
+	info := symphonyLookup(ctx, cwd)
+	applySymphony(tickets, info, jira.Name())
+	return ticketsMsg{tickets: tickets, warn: warn, symphonyURL: info.endpoint}
 }
 
 // symphonyLookup rediscovers the local Symphony instance and asks what it is
@@ -353,9 +447,9 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.refresh()
 
 	case ticketsMsg:
-		a.pendingJIRA = false
-		a.jiraErr = msg.err
-		a.jiraWarn = msg.warn
+		a.pendingTickets = false
+		a.trackerErr = msg.err
+		a.trackerWarn = msg.warn
 		a.symphonyURL = msg.symphonyURL
 		if msg.err == nil {
 			a.tickets = msg.tickets
@@ -472,6 +566,10 @@ func (a *app) scheduleForSymphony() tea.Cmd {
 	if !found {
 		return nil
 	}
+	if ticket.Source != a.jira.Name() {
+		a.setFlash("Symphony scheduling is only supported for JIRA tickets")
+		return nil
+	}
 
 	cwd, _ := os.Getwd()
 	cfg, err := readSymphonyConfig(cwd)
@@ -549,6 +647,10 @@ func (a *app) openPicker() tea.Cmd {
 	}
 	if a.jira == nil {
 		a.setFlash("JIRA is not configured; cannot change status")
+		return nil
+	}
+	if ticket, found := a.ticketByKey(row.ticketKey); found && ticket.Source != a.jira.Name() {
+		a.setFlash("changing status is only supported for JIRA tickets")
 		return nil
 	}
 
@@ -822,12 +924,12 @@ func (a *app) notificationView(lay layout) string {
 	switch {
 	case a.flash != "":
 		text, style = "✓ "+a.flash, okStyle
-	case a.jiraErr != nil:
-		text, style = "! jira: "+a.jiraErr.Error(), errStyle
+	case a.trackerErr != nil:
+		text, style = "! "+a.trackerErr.Error(), errStyle
 	case a.ghErr != nil:
 		text, style = "! github: "+a.ghErr.Error(), errStyle
-	case a.jiraWarn != nil:
-		text, style = "~ jira: "+a.jiraWarn.Error(), warnStyle
+	case a.trackerWarn != nil:
+		text, style = "~ "+a.trackerWarn.Error(), warnStyle
 	default:
 		return ""
 	}

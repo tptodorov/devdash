@@ -6,24 +6,30 @@ import (
 	"strings"
 )
 
-// Ticket is a JIRA issue assigned to the current user, together with any pull
+// Ticket is an issue assigned to the current user, together with any pull
 // requests that reference it.
 type Ticket struct {
 	Key      string
 	Summary  string
 	Status   string
-	Category string // JIRA status category: "In Progress", "To Do", "Done"
+	Category string // status category: "In Progress", "To Do", "Done"
 	Type     string // the project's own issue type name, whatever it is
 	URL      string
 	Labels   []string
-	// IsSubtask comes from JIRA's own issuetype.subtask flag rather than the
-	// type's name, so it holds for any project's naming.
+	// IsSubtask comes from the tracker's own sub-task/sub-issue flag rather
+	// than the type's name, so it holds for any project's naming.
 	IsSubtask  bool
 	ChildCount int // issues whose parent is this ticket, any assignee
 	// Symphony is the state of the Symphony session working this ticket:
 	// running, blocked, retrying, or empty when Symphony is not on it.
 	Symphony string
 	PRs      []PullRequest
+	// Source names the Tracker this ticket came from, e.g. "JIRA" or
+	// "Linear". Write actions (status change, Symphony scheduling) are JIRA
+	// workflows with no equivalent wired up for other trackers, so they are
+	// gated on this field rather than on which trackers happen to be
+	// configured.
+	Source string
 }
 
 // childCandidates lists the tickets worth asking JIRA about children for. JIRA
@@ -42,9 +48,15 @@ func childCandidates(tickets []Ticket) []string {
 	return out
 }
 
-// applyChildCounts records how many children each ticket has.
-func applyChildCounts(tickets []Ticket, counts map[string]int) {
+// applyChildCounts records how many children each ticket has. Only tickets
+// from source are touched, since counts were only ever queried for that
+// tracker; a ticket from another tracker that happens to share a key is left
+// alone rather than getting an unrelated count.
+func applyChildCounts(tickets []Ticket, counts map[string]int, source string) {
 	for i := range tickets {
+		if tickets[i].Source != source {
+			continue
+		}
 		tickets[i].ChildCount = counts[strings.ToUpper(tickets[i].Key)]
 	}
 }
@@ -135,16 +147,23 @@ func rankFor(status, category string) (int, int) {
 // status. Pull requests that do not map onto an active ticket are returned
 // separately so they stay visible instead of being silently dropped.
 func build(tickets []Ticket, prs []PullRequest) ([]group, []PullRequest) {
-	byKey := make(map[string]int, len(tickets))
+	// A key is only guaranteed unique within its own tracker, so two trackers
+	// issuing the same key (e.g. a JIRA project and a Linear team sharing a
+	// short code) must not have one silently overwrite the other here; every
+	// ticket matching a key gets the pull request.
+	byKey := make(map[string][]int, len(tickets))
 	for i, t := range tickets {
-		byKey[strings.ToUpper(t.Key)] = i
+		key := strings.ToUpper(t.Key)
+		byKey[key] = append(byKey[key], i)
 	}
 
 	var orphans []PullRequest
 	for _, pr := range prs {
 		pr.Ticket = ticketKeyFor(pr)
-		if i, ok := byKey[strings.ToUpper(pr.Ticket)]; ok {
-			tickets[i].PRs = append(tickets[i].PRs, pr)
+		if idxs, ok := byKey[strings.ToUpper(pr.Ticket)]; ok {
+			for _, i := range idxs {
+				tickets[i].PRs = append(tickets[i].PRs, pr)
+			}
 			continue
 		}
 		orphans = append(orphans, pr)
