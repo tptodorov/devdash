@@ -266,6 +266,96 @@ func TestScheduleForSymphonyRefusesNonJIRATicket(t *testing.T) {
 	}
 }
 
+// ticketByKey scans every tracker's tickets by key alone, so a JIRA and a
+// Linear ticket sharing a key (plausible during a JIRA-to-Linear migration
+// that keeps the same short code) must not let the cursor sitting on the
+// Linear row resolve to the JIRA ticket that happens to share its key.
+func TestOpenPickerRefusesNonJIRATicketAcrossATrackerKeyCollision(t *testing.T) {
+	a := newAppForTest()
+	a.jira = &jiraClient{}
+	// The JIRA ticket's group must sort ahead of the Linear ticket's group, so
+	// a key-only scan meets the JIRA ticket first — the exact ordering that
+	// let the bug hide behind a green test before.
+	a.tickets = []Ticket{
+		{Key: "ENG-1", Summary: "jira", Status: "In Progress", Category: "In Progress", Source: "JIRA"},
+		{Key: "ENG-1", Summary: "linear", Status: "To Do", Category: "To Do", Source: "Linear"},
+	}
+	a.settle()
+	a.cursor = rowIndexByStatus(t, a, "To Do")
+
+	cmd := a.openPicker()
+	if cmd != nil {
+		t.Error("openPicker() should not start a fetch for the Linear row, even though a JIRA ticket shares its key")
+	}
+	if !strings.Contains(a.flash, "only supported for JIRA tickets") {
+		t.Errorf("flash = %q, want it to explain JIRA-only support", a.flash)
+	}
+}
+
+func TestScheduleForSymphonyRefusesNonJIRATicketAcrossATrackerKeyCollision(t *testing.T) {
+	a := newAppForTest()
+	a.jira = &jiraClient{}
+	a.tickets = []Ticket{
+		{Key: "ENG-1", Summary: "jira", Status: "In Progress", Category: "In Progress", Source: "JIRA"},
+		{Key: "ENG-1", Summary: "linear", Status: "To Do", Category: "To Do", Source: "Linear"},
+	}
+	a.settle()
+	a.cursor = rowIndexByStatus(t, a, "To Do")
+
+	cmd := a.scheduleForSymphony()
+	if cmd != nil {
+		t.Error("scheduleForSymphony() should not start a fetch for the Linear row, even though a JIRA ticket shares its key")
+	}
+	if !strings.Contains(a.flash, "only supported for JIRA tickets") {
+		t.Errorf("flash = %q, want it to explain JIRA-only support", a.flash)
+	}
+}
+
+// settle()'s cursor-restore logic keys row identity by id alone (the same
+// disambiguation gap ticketByKey had): if two colliding tickets ever produced
+// the same id, a refresh that reorders groups could silently move the cursor
+// from one tracker's ticket onto the other tracker's same-keyed ticket.
+func TestSettleCursorRestoreStaysOnTheSameTrackersTicketAcrossAKeyCollision(t *testing.T) {
+	a := newAppForTest()
+	jira := Ticket{Key: "ENG-1", Summary: "jira", Source: "JIRA"}
+	linear := Ticket{Key: "ENG-1", Summary: "linear", Source: "Linear"}
+
+	// First settle: Linear's group sorts ahead of JIRA's, and the cursor
+	// lands on the Linear row.
+	linear.Status, linear.Category = "In Progress", "In Progress"
+	jira.Status, jira.Category = "To Do", "To Do"
+	a.tickets = []Ticket{jira, linear}
+	a.settle()
+	a.cursor = rowIndexByStatus(t, a, "In Progress")
+
+	// Second settle: a status change now sorts JIRA's group ahead of
+	// Linear's — the exact kind of reorder settle()'s own comment says the
+	// id-based restore exists to survive.
+	jira.Status, jira.Category = "In Progress", "In Progress"
+	linear.Status, linear.Category = "To Do", "To Do"
+	a.tickets = []Ticket{jira, linear}
+	a.settle()
+
+	row, ok := a.current()
+	if !ok || row.source != "Linear" {
+		t.Fatalf("cursor restored onto source %q, want it to stay on the Linear ticket it was on before the refresh", row.source)
+	}
+}
+
+// rowIndexByStatus finds the selRow whose status matches, since two rows
+// sharing a key (a cross-tracker collision) are otherwise indistinguishable
+// by label alone.
+func rowIndexByStatus(t *testing.T, a *app, status string) int {
+	t.Helper()
+	for i, s := range a.sel {
+		if s.status == status {
+			return i
+		}
+	}
+	t.Fatalf("no row with status %q in %+v", status, a.sel)
+	return -1
+}
+
 func TestNewAppActivatesTrackersFromEnvironment(t *testing.T) {
 	for _, key := range []string{"JIRA_URL", "JIRA_USERNAME", "JIRA_API_TOKEN", "LINEAR_API_KEY"} {
 		t.Setenv(key, "")
