@@ -334,7 +334,7 @@ func fetchTickets(ctx context.Context, trackers []trackerSource, jira *jiraClien
 			}
 		}
 		if counts, cErr := jira.ChildCounts(ctx, childCandidates(jiraTickets)); cErr == nil {
-			applyChildCounts(tickets, counts)
+			applyChildCounts(tickets, counts, jira.Name())
 		} else {
 			cErr = fmt.Errorf("child counts unavailable: %w", cErr)
 			if warn == nil {
@@ -348,7 +348,7 @@ func fetchTickets(ctx context.Context, trackers []trackerSource, jira *jiraClien
 	// Symphony is rediscovered and queried on every refresh.
 	cwd, _ := os.Getwd()
 	info := symphonyLookup(ctx, cwd)
-	applySymphony(tickets, info)
+	applySymphony(tickets, info, jira.Name())
 	return ticketsMsg{tickets: tickets, warn: warn, symphonyURL: info.endpoint}
 }
 

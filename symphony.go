@@ -233,14 +233,21 @@ type symphonyInfo struct {
 	haveCfg  bool
 }
 
-// applySymphony marks each ticket with what Symphony is doing about it.
+// applySymphony marks each ticket with what Symphony is doing about it. Only
+// tickets from source are touched: planSchedule's conditions are JIRA
+// workflow conditions, so a ticket from another tracker that happens to match
+// them is left alone rather than shown as Symphony-scheduled work Symphony
+// can never actually act on.
 //
 // A live session wins, because it is what is happening now. Otherwise a ticket
 // that already meets every condition in WORKFLOW.md is marked scheduled: queued,
 // but not yet picked up. The distinction matters because Symphony polls, so a
 // freshly scheduled ticket sits waiting for up to one interval.
-func applySymphony(tickets []Ticket, info symphonyInfo) {
+func applySymphony(tickets []Ticket, info symphonyInfo, source string) {
 	for i := range tickets {
+		if tickets[i].Source != source {
+			continue
+		}
 		if state, busy := info.live[strings.ToUpper(tickets[i].Key)]; busy {
 			tickets[i].Symphony = state
 			continue

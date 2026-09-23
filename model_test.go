@@ -336,8 +336,8 @@ func TestChildCandidatesSkipsSubtasksOnly(t *testing.T) {
 }
 
 func TestApplyChildCountsIsCaseInsensitive(t *testing.T) {
-	tickets := []Ticket{{Key: "proj-17453", Type: "Task"}, {Key: "PROJ-17455", Type: "Task"}}
-	applyChildCounts(tickets, map[string]int{"PROJ-17453": 4})
+	tickets := []Ticket{{Key: "proj-17453", Source: "JIRA", Type: "Task"}, {Key: "PROJ-17455", Source: "JIRA", Type: "Task"}}
+	applyChildCounts(tickets, map[string]int{"PROJ-17453": 4}, "JIRA")
 
 	if tickets[0].ChildCount != 4 {
 		t.Errorf("ChildCount = %d, want 4", tickets[0].ChildCount)

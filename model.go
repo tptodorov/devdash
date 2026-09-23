@@ -48,9 +48,15 @@ func childCandidates(tickets []Ticket) []string {
 	return out
 }
 
-// applyChildCounts records how many children each ticket has.
-func applyChildCounts(tickets []Ticket, counts map[string]int) {
+// applyChildCounts records how many children each ticket has. Only tickets
+// from source are touched, since counts were only ever queried for that
+// tracker; a ticket from another tracker that happens to share a key is left
+// alone rather than getting an unrelated count.
+func applyChildCounts(tickets []Ticket, counts map[string]int, source string) {
 	for i := range tickets {
+		if tickets[i].Source != source {
+			continue
+		}
 		tickets[i].ChildCount = counts[strings.ToUpper(tickets[i].Key)]
 	}
 }
