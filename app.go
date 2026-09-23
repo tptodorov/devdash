@@ -826,7 +826,11 @@ func (a *app) settle() {
 	for _, g := range a.groups {
 		for _, t := range g.Tickets {
 			s := selRow{
-				id:        "ticket:" + t.Key,
+				// Scoped by source, not just key: two trackers can issue the
+				// same key (a JIRA/Linear collision), and an id collision here
+				// would let a refresh's cursor-restore land the cursor on the
+				// wrong tracker's ticket.
+				id:        "ticket:" + t.Source + ":" + t.Key,
 				label:     t.Key,
 				ticketKey: t.Key,
 				source:    t.Source,

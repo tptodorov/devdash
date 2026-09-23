@@ -311,6 +311,37 @@ func TestScheduleForSymphonyRefusesNonJIRATicketAcrossATrackerKeyCollision(t *te
 	}
 }
 
+// settle()'s cursor-restore logic keys row identity by id alone (the same
+// disambiguation gap ticketByKey had): if two colliding tickets ever produced
+// the same id, a refresh that reorders groups could silently move the cursor
+// from one tracker's ticket onto the other tracker's same-keyed ticket.
+func TestSettleCursorRestoreStaysOnTheSameTrackersTicketAcrossAKeyCollision(t *testing.T) {
+	a := newAppForTest()
+	jira := Ticket{Key: "ENG-1", Summary: "jira", Source: "JIRA"}
+	linear := Ticket{Key: "ENG-1", Summary: "linear", Source: "Linear"}
+
+	// First settle: Linear's group sorts ahead of JIRA's, and the cursor
+	// lands on the Linear row.
+	linear.Status, linear.Category = "In Progress", "In Progress"
+	jira.Status, jira.Category = "To Do", "To Do"
+	a.tickets = []Ticket{jira, linear}
+	a.settle()
+	a.cursor = rowIndexByStatus(t, a, "In Progress")
+
+	// Second settle: a status change now sorts JIRA's group ahead of
+	// Linear's — the exact kind of reorder settle()'s own comment says the
+	// id-based restore exists to survive.
+	jira.Status, jira.Category = "In Progress", "In Progress"
+	linear.Status, linear.Category = "To Do", "To Do"
+	a.tickets = []Ticket{jira, linear}
+	a.settle()
+
+	row, ok := a.current()
+	if !ok || row.source != "Linear" {
+		t.Fatalf("cursor restored onto source %q, want it to stay on the Linear ticket it was on before the refresh", row.source)
+	}
+}
+
 // rowIndexByStatus finds the selRow whose status matches, since two rows
 // sharing a key (a cross-tracker collision) are otherwise indistinguishable
 // by label alone.
