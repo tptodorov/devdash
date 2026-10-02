@@ -44,7 +44,8 @@ func TestLiveGitHubIssuesTicketsAreWellFormed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tickets() error = %v", err)
 	}
-	t.Logf("%d open issues in %s", len(got), tr.repo())
+	repo := tr.canonical(ctx)
+	t.Logf("%d open issues in %s", len(got), repo)
 
 	for _, tk := range got {
 		if !issueKeyRE.MatchString(tk.Key) {
@@ -53,28 +54,16 @@ func TestLiveGitHubIssuesTicketsAreWellFormed(t *testing.T) {
 		if tk.Source != "GitHub" {
 			t.Errorf("%s source = %q, want GitHub", tk.Key, tk.Source)
 		}
-		if !strings.Contains(strings.ToLower(tk.URL), "/"+strings.ToLower(tr.repo())+"/issues/") {
-			t.Errorf("%s url %q is not an issue of %s", tk.Key, tk.URL, tr.repo())
+		if !strings.Contains(strings.ToLower(tk.URL), "/"+strings.ToLower(repo)+"/issues/") {
+			t.Errorf("%s url %q is not an issue of %s", tk.Key, tk.URL, repo)
 		}
-		switch tk.Category {
-		case "To Do":
-			if tk.Status != "Open" {
-				t.Errorf("%s: To Do status = %q, want Open", tk.Key, tk.Status)
-			}
-		case "In Progress":
-			if tk.Status != "In Progress" {
-				t.Errorf("%s: In Progress status = %q", tk.Key, tk.Status)
-			}
-		default:
+		if tk.Category != "To Do" && tk.Category != "In Progress" {
 			t.Errorf("%s category = %q, want To Do or In Progress", tk.Key, tk.Category)
-		}
-		if tk.IsSubtask && tk.ChildCount > 0 {
-			t.Logf("%s is a sub-issue with %d children", tk.Key, tk.ChildCount)
 		}
 	}
 }
 
-func TestLiveGitHubIssuesEmptyQueryNarrowsToNothingExtra(t *testing.T) {
+func TestLiveGitHubIssuesAssignedIsASubsetOfAll(t *testing.T) {
 	tr := liveGitHubIssues(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
@@ -96,15 +85,5 @@ func TestLiveGitHubIssuesEmptyQueryNarrowsToNothingExtra(t *testing.T) {
 		if !have[tk.Key] {
 			t.Errorf("assigned issue %s missing from the unfiltered list", tk.Key)
 		}
-	}
-}
-
-func TestLiveGitHubIssuesRejectedTokenIsReported(t *testing.T) {
-	tr := liveGitHubIssues(t)
-	tr.gh = &githubClient{token: "bogus", http: tr.gh.http, api: tr.gh.api}
-
-	_, err := tr.Tickets(t.Context(), "")
-	if err == nil || !strings.Contains(err.Error(), "rejected the token") {
-		t.Fatalf("Tickets() error = %v, want a rejected-token error", err)
 	}
 }

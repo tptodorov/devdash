@@ -239,7 +239,7 @@ func TestApplySymphony(t *testing.T) {
 	applySymphony(tickets, symphonyInfo{live: map[string]string{
 		"PROJ-17538": SymphonyRunning,
 		"PROJ-100":   SymphonyBlocked,
-	}}, "JIRA")
+	}})
 
 	if tickets[0].Symphony != SymphonyRunning {
 		t.Errorf("PROJ-17538 = %q, want running", tickets[0].Symphony)
@@ -355,7 +355,7 @@ func TestScheduledIsDistinctFromActivelyWorked(t *testing.T) {
 		// Not eligible: finished.
 		{Key: "PROJ-5", Source: "JIRA", Status: "Done", Labels: []string{"symphony-ready"}},
 	}
-	applySymphony(tickets, info, "JIRA")
+	applySymphony(tickets, info)
 
 	want := []string{SymphonyScheduled, SymphonyRunning, "", "", ""}
 	for i, w := range want {
@@ -386,15 +386,34 @@ func TestApplySymphonyPrecedence(t *testing.T) {
 	applySymphony(blocked, symphonyInfo{
 		haveCfg: true, cfg: testConfig(),
 		live: map[string]string{"PROJ-1": SymphonyBlocked},
-	}, "JIRA")
+	})
 	if blocked[0].Symphony != SymphonyBlocked {
 		t.Errorf("= %q, want a live session to outrank scheduled", blocked[0].Symphony)
 	}
 
 	// Without WORKFLOW.md there are no conditions to judge against.
 	noCfg := []Ticket{eligible}
-	applySymphony(noCfg, symphonyInfo{}, "JIRA")
+	applySymphony(noCfg, symphonyInfo{})
 	if noCfg[0].Symphony != "" {
 		t.Errorf("= %q, want nothing without a configuration", noCfg[0].Symphony)
+	}
+}
+
+// Symphony watches the one tracker WORKFLOW.md names; a live session or an
+// eligible-looking ticket from another tracker is none of its business.
+func TestApplySymphonyOnlyMarksTheWatchedTracker(t *testing.T) {
+	cfg := testConfig()
+	cfg.Tracker.Kind = "github"
+	tickets := []Ticket{
+		{Key: "#7", Source: "GitHub", Status: "To Do", Labels: []string{"symphony-ready"}},
+		{Key: "#7", Source: "JIRA", Status: "To Do", Labels: []string{"symphony-ready"}},
+	}
+	applySymphony(tickets, symphonyInfo{haveCfg: true, cfg: cfg, live: map[string]string{"#7": SymphonyRunning}})
+
+	if tickets[0].Symphony != SymphonyRunning {
+		t.Errorf("GitHub #7 = %q, want running", tickets[0].Symphony)
+	}
+	if tickets[1].Symphony != "" {
+		t.Errorf("JIRA #7 = %q, want empty: Symphony watches GitHub", tickets[1].Symphony)
 	}
 }

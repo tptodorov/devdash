@@ -169,11 +169,10 @@ func writeHelp(w io.Writer) {
 		fmt.Fprintf(w, "  %s%s\n", style.Render(pad(marker, 22)), mutedStyle.Render(s.what))
 	}
 	prose(w, "")
-	prose(w, "S toggles the selected ticket in and out of Symphony's queue, on JIRA tickets")
-	prose(w, "only — Linear has no Symphony equivalent, and pressing S on a Linear ticket")
-	prose(w, "flashes as much. The conditions come from the tracker block of WORKFLOW.md, so")
-	prose(w, "nothing here is assumed: the ticket must belong to project_key, carry every")
-	prose(w, "required_label, and sit in one of active_states.")
+	prose(w, "S toggles the selected ticket in and out of Symphony's queue, for tickets from")
+	prose(w, "the tracker WORKFLOW.md names in tracker.kind. The conditions come from its")
+	prose(w, "tracker block, so nothing here is assumed: the ticket must belong to")
+	prose(w, "project_key, carry every required_label, and sit in one of active_states.")
 	prose(w, "")
 	prose(w, "On a ticket Symphony would not pick up, S adds whatever is missing. On one it")
 	prose(w, "already would, S removes the required labels again, leaving the status alone.")
@@ -278,7 +277,7 @@ func writeHelp(w io.Writer) {
 		fmt.Fprintf(w, "    %s%s\n", normalStyle.Render(pad(c[0], 42)), mutedStyle.Render(c[1]))
 	}
 	fmt.Fprintf(w, "\n  %s\n",
-		faintStyle.Render("Nothing is written anywhere except the clipboard, and JIRA when you press s."))
+		faintStyle.Render("Nothing is written anywhere except the clipboard, and your tracker when you press s or S."))
 
 	section(w, "SCOPE")
 	for _, line := range []string{

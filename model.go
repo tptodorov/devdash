@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -30,10 +31,8 @@ type Ticket struct {
 	// even when no key appears in the pull request's title or branch.
 	LinkedPRs []string
 	// Source names the Tracker this ticket came from, e.g. "JIRA" or
-	// "Linear". Write actions (status change, Symphony scheduling) are JIRA
-	// workflows with no equivalent wired up for other trackers, so they are
-	// gated on this field rather than on which trackers happen to be
-	// configured.
+	// "Linear" or "GitHub". It tells apart tickets from different trackers
+	// that share a key, and picks the tracker a write action goes to.
 	Source string
 }
 
@@ -127,7 +126,9 @@ func ticketKeyFor(pr PullRequest) string {
 	}
 	for _, s := range []string{pr.Title, pr.Branch} {
 		for _, m := range issueNumberRE.FindAllStringSubmatch(s, -1) {
-			if m[1] != "" {
+			// GitHub numbers issues and pull requests together, so a PR's own
+			// number (a squash-merge's "(#45)") is never the issue it addresses.
+			if m[1] != "" && m[1] != "#"+strconv.Itoa(pr.Number) {
 				return m[1]
 			}
 		}

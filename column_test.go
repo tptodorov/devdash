@@ -208,6 +208,20 @@ func TestChildrenSearchURL(t *testing.T) {
 	}
 }
 
+// A GitHub issue lists its sub-issues on its own page, so that is where its
+// child count leads; JIRA needs a search for them.
+func TestChildrenURL(t *testing.T) {
+	gh := Ticket{Key: "#2", URL: "https://github.com/acme/app/issues/2", Source: "GitHub", ChildCount: 3}
+	if got := childrenURL(gh); got != gh.URL {
+		t.Errorf("GitHub childrenURL = %q, want the issue's own page", got)
+	}
+
+	jira := Ticket{Key: "PROJ-455", URL: "https://your-org.atlassian.net/browse/PROJ-455", Source: "JIRA", ChildCount: 2}
+	if got, want := childrenURL(jira), "https://your-org.atlassian.net/issues/?jql=parent+%3D+PROJ-455"; got != want {
+		t.Errorf("JIRA childrenURL = %q, want %q", got, want)
+	}
+}
+
 func TestColumnNavigation(t *testing.T) {
 	a := columnApp()
 	a.cursor, a.col = 0, 0

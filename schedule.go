@@ -153,15 +153,15 @@ func planSchedule(cfg symphonyConfig, t Ticket) schedulePlan {
 
 // applySchedule carries out a plan: labels first, then the transition, so a
 // failure to transition still leaves the ticket labelled and visibly closer.
-func applySchedule(ctx context.Context, jira *jiraClient, plan schedulePlan) error {
-	if err := jira.UpdateLabels(ctx, plan.key, plan.addLabels, plan.removeLabels); err != nil {
+func applySchedule(ctx context.Context, ed Editor, plan schedulePlan) error {
+	if err := ed.UpdateLabels(ctx, plan.key, plan.addLabels, plan.removeLabels); err != nil {
 		return err
 	}
 	if plan.toStatus == "" {
 		return nil
 	}
 
-	transitions, err := jira.Transitions(ctx, plan.key)
+	transitions, err := ed.Transitions(ctx, plan.key)
 	if err != nil {
 		return err
 	}
@@ -169,7 +169,7 @@ func applySchedule(ctx context.Context, jira *jiraClient, plan schedulePlan) err
 		if !strings.EqualFold(tr.To, plan.toStatus) || len(tr.Required) > 0 {
 			continue
 		}
-		return jira.ApplyTransition(ctx, plan.key, tr.ID, nil)
+		return ed.ApplyTransition(ctx, plan.key, tr.ID, nil)
 	}
 	return fmt.Errorf("no transition from %s to %s that needs no extra fields",
 		plan.key, plan.toStatus)

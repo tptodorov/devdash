@@ -17,8 +17,9 @@ const (
 )
 
 // picker drives the status-change flow: fetch the allowed transitions, let the
-// user choose one, collect any values JIRA requires, then apply it.
+// user choose one, collect any values the tracker requires, then apply it.
 type picker struct {
+	source    string // the tracker the ticket belongs to, which performs the move
 	key       string
 	summary   string
 	current   string

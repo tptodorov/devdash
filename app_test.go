@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -194,6 +195,7 @@ func TestFetchTicketsOnlyAsksJIRAAboutJIRATicketChildren(t *testing.T) {
 func TestFetchTicketsScopesSymphonyToJIRAAcrossATrackerKeyCollision(t *testing.T) {
 	t.Chdir(writeWorkflow(t, `---
 tracker:
+  kind: jira
   provider:
     project_key: ENG
   required_labels:
@@ -233,83 +235,156 @@ tracker:
 	}
 }
 
-// The status-change and Symphony-scheduling keys are JIRA workflows, so they
-// must refuse a ticket sourced from another tracker even while JIRA itself is
-// configured.
-func TestOpenPickerRefusesNonJIRATicket(t *testing.T) {
-	a := newAppForTest()
-	a.jira = &jiraClient{}
-	a.tickets = []Ticket{{Key: "ENG-1", Summary: "not a JIRA ticket", Status: "Todo", Category: "To Do", Source: "Linear"}}
-	a.settle()
-	a.cursor = 0
+// fakeEditor is a tracker that also accepts write actions, recording what the
+// dashboard asked of it so tests can see which tracker an action went to.
+type fakeEditor struct {
+	fakeTracker
+	transitionsFor []string
+	applied        []string // "key:transitionID"
+	labelled       []string // "key +a,b -c"
+}
 
-	cmd := a.openPicker()
-	if cmd != nil {
-		t.Error("openPicker() should not start a fetch for a non-JIRA ticket")
+func (f *fakeEditor) Transitions(_ context.Context, key string) ([]Transition, error) {
+	f.transitionsFor = append(f.transitionsFor, key)
+	return []Transition{{ID: "7", Name: "Done", To: "Done", ToCategory: "Done"}}, nil
+}
+
+func (f *fakeEditor) ApplyTransition(_ context.Context, key, id string, _ map[string]any) error {
+	f.applied = append(f.applied, key+":"+id)
+	return nil
+}
+
+func (f *fakeEditor) UpdateLabels(_ context.Context, key string, add, remove []string) error {
+	f.labelled = append(f.labelled, key+" +"+strings.Join(add, ",")+" -"+strings.Join(remove, ","))
+	return nil
+}
+
+// Status changes and Symphony scheduling work on every tracker, and always go
+// to the tracker the cursor's own row came from, never to another tracker that
+// happens to issue the same key (plausible while migrating JIRA to Linear).
+func TestOpenPickerAsksTheRowsOwnTracker(t *testing.T) {
+	jira := &fakeEditor{fakeTracker: fakeTracker{name: "JIRA"}}
+	linear := &fakeEditor{fakeTracker: fakeTracker{name: "Linear"}}
+	gh := &fakeEditor{fakeTracker: fakeTracker{name: "GitHub"}}
+
+	tests := []struct {
+		name   string
+		source string
+		status string
+		want   *fakeEditor
+	}{
+		{"JIRA", "JIRA", "In Progress", jira},
+		{"Linear", "Linear", "To Do", linear},
+		{"GitHub", "GitHub", "Open", gh},
 	}
-	if !strings.Contains(a.flash, "only supported for JIRA tickets") {
-		t.Errorf("flash = %q, want it to explain JIRA-only support", a.flash)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, f := range []*fakeEditor{jira, linear, gh} {
+				f.transitionsFor = nil
+			}
+			a := newAppForTest()
+			a.trackers = []trackerSource{{tracker: jira}, {tracker: linear}, {tracker: gh}}
+			// Same key in every tracker; only the row's source tells them apart.
+			a.tickets = []Ticket{
+				{Key: "ENG-1", Status: "In Progress", Category: "In Progress", Source: "JIRA"},
+				{Key: "ENG-1", Status: "To Do", Category: "To Do", Source: "Linear"},
+				{Key: "ENG-1", Status: "Open", Category: "To Do", Source: "GitHub"},
+			}
+			a.settle()
+			a.cursor = rowIndexByStatus(t, a, tc.status)
+
+			cmd := a.openPicker()
+			if cmd == nil {
+				t.Fatalf("openPicker() started nothing; flash = %q", a.flash)
+			}
+			cmd()
+
+			for _, f := range []*fakeEditor{jira, linear, gh} {
+				wantCalls := 0
+				if f == tc.want {
+					wantCalls = 1
+				}
+				if len(f.transitionsFor) != wantCalls {
+					t.Errorf("%s asked for transitions %d times, want %d", f.Name(), len(f.transitionsFor), wantCalls)
+				}
+			}
+		})
 	}
 }
 
-func TestScheduleForSymphonyRefusesNonJIRATicket(t *testing.T) {
+func TestOpenPickerWithoutAnEditorSaysSo(t *testing.T) {
+	a := newAppForTest() // no trackers: demo-like state
+	a.tickets = []Ticket{{Key: "ENG-1", Status: "To Do", Category: "To Do", Source: "Linear"}}
+	a.settle()
+
+	if cmd := a.openPicker(); cmd != nil {
+		t.Error("openPicker() should not start a fetch with no tracker to ask")
+	}
+	if !strings.Contains(a.flash, "Linear is not configured") {
+		t.Errorf("flash = %q, want it to name the unconfigured tracker", a.flash)
+	}
+}
+
+func TestScheduleForSymphonyAsksTheRowsOwnTracker(t *testing.T) {
+	t.Chdir(writeWorkflow(t, `---
+tracker:
+  kind: github
+  required_labels:
+    - symphony-ready
+  active_states:
+    - Open
+---
+`))
+	jira := &fakeEditor{fakeTracker: fakeTracker{name: "JIRA"}}
+	gh := &fakeEditor{fakeTracker: fakeTracker{name: "GitHub"}}
+
 	a := newAppForTest()
-	a.jira = &jiraClient{}
-	a.tickets = []Ticket{{Key: "ENG-1", Summary: "not a JIRA ticket", Status: "Todo", Category: "To Do", Source: "Linear"}}
+	a.trackers = []trackerSource{{tracker: jira}, {tracker: gh}}
+	a.tickets = []Ticket{
+		{Key: "#1", Summary: "gh", Status: "Open", Category: "To Do", Source: "GitHub"},
+	}
 	a.settle()
 	a.cursor = 0
 
 	cmd := a.scheduleForSymphony()
-	if cmd != nil {
-		t.Error("scheduleForSymphony() should not start a fetch for a non-JIRA ticket")
+	if cmd == nil {
+		t.Fatalf("scheduleForSymphony() started nothing; flash = %q", a.flash)
 	}
-	if !strings.Contains(a.flash, "only supported for JIRA tickets") {
-		t.Errorf("flash = %q, want it to explain JIRA-only support", a.flash)
+	cmd()
+
+	if want := []string{"#1 +symphony-ready -"}; !slices.Equal(gh.labelled, want) {
+		t.Errorf("GitHub labelled %q, want %q", gh.labelled, want)
+	}
+	if len(jira.labelled) != 0 {
+		t.Errorf("JIRA was asked to relabel %q for a GitHub ticket", jira.labelled)
 	}
 }
 
-// ticketByKey scans every tracker's tickets by key alone, so a JIRA and a
-// Linear ticket sharing a key (plausible during a JIRA-to-Linear migration
-// that keeps the same short code) must not let the cursor sitting on the
-// Linear row resolve to the JIRA ticket that happens to share its key.
-func TestOpenPickerRefusesNonJIRATicketAcrossATrackerKeyCollision(t *testing.T) {
+// Symphony watches the one tracker its WORKFLOW.md names, so scheduling a
+// ticket from any other tracker would queue work Symphony can never see.
+func TestScheduleForSymphonyRefusesATrackerSymphonyDoesNotWatch(t *testing.T) {
+	t.Chdir(writeWorkflow(t, `---
+tracker:
+  kind: jira
+  active_states:
+    - To Do
+---
+`))
+	gh := &fakeEditor{fakeTracker: fakeTracker{name: "GitHub"}}
+
 	a := newAppForTest()
-	a.jira = &jiraClient{}
-	// The JIRA ticket's group must sort ahead of the Linear ticket's group, so
-	// a key-only scan meets the JIRA ticket first — the exact ordering that
-	// let the bug hide behind a green test before.
-	a.tickets = []Ticket{
-		{Key: "ENG-1", Summary: "jira", Status: "In Progress", Category: "In Progress", Source: "JIRA"},
-		{Key: "ENG-1", Summary: "linear", Status: "To Do", Category: "To Do", Source: "Linear"},
-	}
+	a.trackers = []trackerSource{{tracker: gh}}
+	a.tickets = []Ticket{{Key: "#1", Status: "Open", Category: "To Do", Source: "GitHub"}}
 	a.settle()
-	a.cursor = rowIndexByStatus(t, a, "To Do")
 
-	cmd := a.openPicker()
-	if cmd != nil {
-		t.Error("openPicker() should not start a fetch for the Linear row, even though a JIRA ticket shares its key")
+	if cmd := a.scheduleForSymphony(); cmd != nil {
+		t.Error("scheduleForSymphony() should not start anything for a tracker Symphony does not watch")
 	}
-	if !strings.Contains(a.flash, "only supported for JIRA tickets") {
-		t.Errorf("flash = %q, want it to explain JIRA-only support", a.flash)
+	if !strings.Contains(a.flash, "watches jira") || !strings.Contains(a.flash, "GitHub") {
+		t.Errorf("flash = %q, want it to say Symphony watches jira, not GitHub", a.flash)
 	}
-}
-
-func TestScheduleForSymphonyRefusesNonJIRATicketAcrossATrackerKeyCollision(t *testing.T) {
-	a := newAppForTest()
-	a.jira = &jiraClient{}
-	a.tickets = []Ticket{
-		{Key: "ENG-1", Summary: "jira", Status: "In Progress", Category: "In Progress", Source: "JIRA"},
-		{Key: "ENG-1", Summary: "linear", Status: "To Do", Category: "To Do", Source: "Linear"},
-	}
-	a.settle()
-	a.cursor = rowIndexByStatus(t, a, "To Do")
-
-	cmd := a.scheduleForSymphony()
-	if cmd != nil {
-		t.Error("scheduleForSymphony() should not start a fetch for the Linear row, even though a JIRA ticket shares its key")
-	}
-	if !strings.Contains(a.flash, "only supported for JIRA tickets") {
-		t.Errorf("flash = %q, want it to explain JIRA-only support", a.flash)
+	if len(gh.labelled) != 0 {
+		t.Errorf("GitHub was relabelled %q", gh.labelled)
 	}
 }
 
@@ -457,7 +532,7 @@ func TestNewAppFallsBackToGitHubIssues(t *testing.T) {
 		inRepo(t, "git@github.com:acme/app.git")
 
 		a := newApp("", "", "", 0, true, false)
-		a.setIssuesQuery("")
+		a.setGitHubQuery("")
 		if got := a.trackers[0].query; got != "" {
 			t.Errorf("query = %q, want empty (every open issue)", got)
 		}
@@ -492,8 +567,11 @@ func TestNewAppFallsBackToGitHubIssues(t *testing.T) {
 		if len(a.trackers) != 0 {
 			t.Errorf("trackers = %+v, want none", a.trackers)
 		}
-		if a.trackerErr == nil || !strings.Contains(a.trackerErr.Error(), "GitHub repository") {
-			t.Errorf("trackerErr = %v, want a hint about running inside a GitHub repository", a.trackerErr)
+		if a.trackerErr == nil || !strings.Contains(a.trackerErr.Error(), "inside a GitHub repository") {
+			t.Fatalf("trackerErr = %v, want a hint about running inside a GitHub repository", a.trackerErr)
+		}
+		if strings.Contains(a.trackerErr.Error(), "GITHUB_TOKEN") {
+			t.Errorf("trackerErr = %v, the token is set so it should not be asked for", a.trackerErr)
 		}
 	})
 
@@ -503,7 +581,13 @@ func TestNewAppFallsBackToGitHubIssues(t *testing.T) {
 
 		a := newApp("", "", "", 0, true, false)
 		if len(a.trackers) != 0 || a.trackerErr == nil {
-			t.Errorf("trackers = %+v, err = %v, want none and an error", a.trackers, a.trackerErr)
+			t.Fatalf("trackers = %+v, err = %v, want none and an error", a.trackers, a.trackerErr)
+		}
+		if !strings.Contains(a.trackerErr.Error(), "GITHUB_TOKEN") {
+			t.Errorf("trackerErr = %v, want it to ask for GITHUB_TOKEN", a.trackerErr)
+		}
+		if strings.Contains(a.trackerErr.Error(), "inside a GitHub repository") {
+			t.Errorf("trackerErr = %v, the repository is fine so it should not be blamed", a.trackerErr)
 		}
 	})
 }

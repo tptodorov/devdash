@@ -11,7 +11,7 @@ A Jira, Linear, or GitHub issue shown in the dashboard, usually assigned to the 
 _Avoid_: Issue
 
 **Ticket key**:
-The short identifier for a ticket, such as `PROJ-482`, or `#123` for a GitHub issue in the current repository. A key is unique within its tracker but may also exist in another tracker.
+The short identifier for a ticket, such as `PROJ-482`, or `#123` for a GitHub issue. A key is unique within its tracker but may also exist in another tracker.
 _Avoid_: Issue ID
 
 **Status**:

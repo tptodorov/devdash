@@ -43,8 +43,8 @@ devdash puts them on one line each. It also closes three gaps that cost real tim
 - **Approvals can be invisible.** GitHub reports no review decision when the base
   branch requires none, so an approved PR looks unreviewed. devdash counts
   approving reviews as well as reading the decision.
-- **Changing a ticket's status meant leaving the terminal.** Press `s` (JIRA
-  tickets; Linear is read-only for now).
+- **Changing a ticket's status meant leaving the terminal.** Press `s`
+  (JIRA, Linear or GitHub tickets).
 
 ## Requirements
 
@@ -255,9 +255,10 @@ Tickets are grouped by status, most urgent first, and each group is coloured.
 
 ## Changing a ticket's status
 
-Press `s` on a JIRA ticket (Linear tickets are read-only for now). The choices
-come from JIRA's transitions API for that specific issue, so they are exactly
-what your workflow permits from its current state.
+Press `s` on a ticket. The choices come from its own tracker: JIRA's transitions
+for that specific issue, so exactly what your workflow permits from its current
+state; the other workflow states of its team in Linear; and closing it (as
+completed or as not planned) for a GitHub issue.
 
 ```
 ╭─ PROJ-482 ────────────────────────────────────────────╮
@@ -313,8 +314,9 @@ and the colour says what Symphony is doing with it:
 | `♪` yellow | waiting for the next retry window |
 | `♪` red | paused waiting for operator input or approval |
 
-`S` toggles, on a JIRA ticket (Linear has no Symphony equivalent, and pressing
-`S` on a Linear ticket flashes as much). On a ticket Symphony would pick up it
+`S` toggles a ticket from the tracker WORKFLOW.md names in `tracker.kind` (`jira`,
+`linear` or `github`; a ticket from any other tracker is refused with a message).
+On a ticket Symphony would pick up it
 strips the required labels again, which is enough to release the ticket:
 Symphony re-reads the labels before it retries or reconsiders a blocked issue,
 so stuck work can be taken back, fixed, and scheduled afresh. Only a ticket an
@@ -374,9 +376,9 @@ no state filtering — ask for closed PRs and you get them.
 
 **Correlation.** A pull request attaches to a ticket when its key (JIRA's or
 Linear's — both look like `PROJ-123`, a GitHub issue's is `#123`) appears in its
-**title**, falling back to its **branch name**. A GitHub issue is also matched by
-the pull requests GitHub says close it (`Fixes #123`, or linked in the sidebar),
-and is shown as In Progress while one of them is open. PRs matching no active ticket are
+**title**, falling back to its **branch name**. A GitHub issue also
+matches the pull requests GitHub says close it, and is In Progress while one is
+open. PRs matching no active ticket are
 listed under their own heading rather than hidden, because they still need
 something from you.
 
@@ -397,7 +399,8 @@ but they cannot be merged. `-include-archived` brings them back.
 called over HTTPS. `pbcopy`/`xclip` and `open`/`xdg-open` are used only for the
 clipboard and the browser, and only when you press `c` or `enter`.
 
-Nothing is written anywhere except the clipboard, and JIRA when you press `s`.
+Nothing is written anywhere except the clipboard, and your tracker when you press
+`s` or `S`.
 
 ## Troubleshooting
 

@@ -70,6 +70,21 @@ func TestTicketKeyFor(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "a squash-merge title names the PR itself, not an issue",
+			pr:   PullRequest{Number: 45, Title: "Fix flaky retry (#45)"},
+			want: "",
+		},
+		{
+			name: "a merge commit title names the PR itself",
+			pr:   PullRequest{Number: 12, Title: "Merge pull request #12 from acme/topic"},
+			want: "",
+		},
+		{
+			name: "an issue next to the PR's own number",
+			pr:   PullRequest{Number: 45, Title: "Fix retries for #12 (#45)"},
+			want: "#12",
+		},
+		{
 			name: "not an issue number",
 			pr:   PullRequest{Title: "colour #123abc"},
 			want: "",
