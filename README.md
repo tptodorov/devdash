@@ -1,6 +1,6 @@
 # devdash
 
-Your assigned JIRA and Linear tickets and the pull requests addressing them, on
+Your assigned JIRA, Linear or GitHub tickets and the pull requests addressing them, on
 one page, in your terminal.
 
 [![CI](https://github.com/tptodorov/devdash/actions/workflows/ci.yml/badge.svg)](https://github.com/tptodorov/devdash/actions/workflows/ci.yml)
@@ -53,7 +53,9 @@ devdash puts them on one line each. It also closes three gaps that cost real tim
   have credentials set are shown together. Create a JIRA token at
   [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens),
   a Linear key under linear.app > Settings > Security & access
-- **A GitHub token** with `repo` scope
+- **A GitHub token** with `repo` scope. With no JIRA or Linear credentials,
+  devdash uses the open GitHub issues assigned to you in the repository you run
+  it from, so no tracker setup is needed at all
 
 Every glyph devdash draws is plain Unicode, one column wide, so no special font
 is needed.
@@ -344,6 +346,7 @@ nothing is reported — that is the ordinary case.
 | `-all-repos` | show pull requests from every repository, not just this directory's | — | scoped to this repo |
 | `-jql` | JQL selecting which JIRA tickets to show | `DEVDASH_JQL` | assigned to you, not Done |
 | `-linear-query` | Linear `IssueFilter` (JSON) selecting which Linear tickets to show | `DEVDASH_LINEAR_QUERY` | assigned to you, not done |
+| `-github-query` | search qualifiers selecting which of this repository's open issues to show when GitHub is the tracker; empty shows all | `DEVDASH_GITHUB_QUERY` | `assignee:@me` |
 | `-pr-query` | GitHub search selecting which pull requests to show; overrides repo scoping | `DEVDASH_PR_QUERY` | open and recently merged, scoped to this repo |
 | `-include-archived` | keep pull requests whose repository is archived | — | archived hidden |
 | `-no-links` | render plain text instead of OSC 8 terminal hyperlinks | — | hyperlinks on |
@@ -360,6 +363,7 @@ Scope it to a project or an organisation by overriding the queries:
 ```bash
 devdash -jql 'assignee = currentUser() AND project = PROJ AND statusCategory != Done ORDER BY updated DESC'
 devdash -linear-query '{"team":{"key":{"eq":"ENG"}},"state":{"type":{"nin":["completed","canceled"]}}}'
+devdash -github-query 'assignee:@me label:bug'
 devdash -pr-query 'author:@me is:pr is:open org:your-org'
 ```
 
@@ -369,8 +373,10 @@ no state filtering — ask for closed PRs and you get them.
 ## How it works
 
 **Correlation.** A pull request attaches to a ticket when its key (JIRA's or
-Linear's — both look like `PROJ-123`) appears in its **title**, falling back to
-its **branch name**. PRs matching no active ticket are
+Linear's — both look like `PROJ-123`, a GitHub issue's is `#123`) appears in its
+**title**, falling back to its **branch name**. A GitHub issue is also matched by
+the pull requests GitHub says close it (`Fixes #123`, or linked in the sidebar),
+and is shown as In Progress while one of them is open. PRs matching no active ticket are
 listed under their own heading rather than hidden, because they still need
 something from you.
 

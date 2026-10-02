@@ -49,6 +49,31 @@ func TestTicketKeyFor(t *testing.T) {
 			pr:   PullRequest{Title: "proj-123: nope", Branch: "topic"},
 			want: "",
 		},
+		{
+			name: "GitHub issue number in title",
+			pr:   PullRequest{Title: "Fix flaky retry (#12)", Branch: "topic"},
+			want: "#12",
+		},
+		{
+			name: "GitHub issue number in branch",
+			pr:   PullRequest{Title: "fix the thing", Branch: "fix/#12-retry"},
+			want: "#12",
+		},
+		{
+			name: "tracker key wins over an issue number",
+			pr:   PullRequest{Title: "PROJ-7: fix #12"},
+			want: "PROJ-7",
+		},
+		{
+			name: "another repo's issue is not this repo's",
+			pr:   PullRequest{Title: "relates to acme/other#5"},
+			want: "",
+		},
+		{
+			name: "not an issue number",
+			pr:   PullRequest{Title: "colour #123abc"},
+			want: "",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -167,6 +192,41 @@ func TestBuildTreatsTicketKeyCaseInsensitively(t *testing.T) {
 	}
 	if got := groups[0].Tickets[0].PRs; len(got) != 1 {
 		t.Errorf("expected the PR to link despite key case, got %+v", got)
+	}
+}
+
+func TestBuildMatchesGitHubIssuesByNumberAndByLinkedPR(t *testing.T) {
+	tickets := []Ticket{
+		{Key: "#12", Status: "Open", Category: "To Do"},
+		{Key: "#30", Status: "In Progress", Category: "In Progress",
+			LinkedPRs: []string{"https://github.com/acme/app/pull/31"}},
+	}
+	prs := []PullRequest{
+		{Repo: "app", Number: 20, Title: "Fix retries (#12)", URL: "https://github.com/acme/app/pull/20"},
+		// Linked by GitHub's closing reference only: nothing in the title says #30.
+		{Repo: "app", Number: 31, Title: "Rework the cache", URL: "https://github.com/acme/app/pull/31"},
+		// Both say #30 and is linked: it must still appear once.
+		{Repo: "app", Number: 32, Title: "Cache part 2 (#30)", URL: "https://github.com/acme/app/pull/32"},
+	}
+	tickets[1].LinkedPRs = append(tickets[1].LinkedPRs, "https://github.com/acme/app/pull/32")
+
+	groups, orphans := build(tickets, prs)
+	if len(orphans) != 0 {
+		t.Fatalf("got orphans %+v, want none", orphans)
+	}
+	var byKey = map[string][]int{}
+	for _, g := range groups {
+		for _, tk := range g.Tickets {
+			for _, pr := range tk.PRs {
+				byKey[tk.Key] = append(byKey[tk.Key], pr.Number)
+			}
+		}
+	}
+	if !slices.Equal(byKey["#12"], []int{20}) {
+		t.Errorf("#12 PRs = %v, want [20]", byKey["#12"])
+	}
+	if !slices.Equal(byKey["#30"], []int{31, 32}) {
+		t.Errorf("#30 PRs = %v, want [31 32]", byKey["#30"])
 	}
 }
 

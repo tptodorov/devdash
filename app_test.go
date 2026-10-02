@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -357,7 +359,7 @@ func rowIndexByStatus(t *testing.T, a *app, status string) int {
 }
 
 func TestNewAppActivatesTrackersFromEnvironment(t *testing.T) {
-	for _, key := range []string{"JIRA_URL", "JIRA_USERNAME", "JIRA_API_TOKEN", "LINEAR_API_KEY"} {
+	for _, key := range []string{"JIRA_URL", "JIRA_USERNAME", "JIRA_API_TOKEN", "LINEAR_API_KEY", "GITHUB_TOKEN", "GH_TOKEN"} {
 		t.Setenv(key, "")
 	}
 
@@ -411,6 +413,97 @@ func TestNewAppActivatesTrackersFromEnvironment(t *testing.T) {
 		}
 		if a.trackerErr != nil {
 			t.Errorf("trackerErr = %v, want nil", a.trackerErr)
+		}
+	})
+}
+
+// inRepo moves the test into a directory that looks like a clone of remote.
+func inRepo(t *testing.T, remote string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "[remote \"origin\"]\n\turl = " + remote + "\n"
+	if err := os.WriteFile(filepath.Join(dir, ".git", "config"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+}
+
+func TestNewAppFallsBackToGitHubIssues(t *testing.T) {
+	for _, key := range []string{"JIRA_URL", "JIRA_USERNAME", "JIRA_API_TOKEN", "LINEAR_API_KEY"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("GITHUB_TOKEN", "ghp_test")
+	t.Setenv("GH_TOKEN", "")
+
+	t.Run("inside a GitHub repo it uses that repo's issues", func(t *testing.T) {
+		inRepo(t, "git@github.com:acme/app.git")
+
+		a := newApp("", "", "", 0, true, false)
+		if len(a.trackers) != 1 || a.trackers[0].tracker.Name() != "GitHub" {
+			t.Fatalf("trackers = %+v, want just GitHub", a.trackers)
+		}
+		if a.trackers[0].query != defaultIssuesQuery {
+			t.Errorf("query = %q, want %q", a.trackers[0].query, defaultIssuesQuery)
+		}
+		if a.trackerErr != nil {
+			t.Errorf("trackerErr = %v, want nil", a.trackerErr)
+		}
+	})
+
+	t.Run("the issues query can be overridden, even to empty", func(t *testing.T) {
+		inRepo(t, "git@github.com:acme/app.git")
+
+		a := newApp("", "", "", 0, true, false)
+		a.setIssuesQuery("")
+		if got := a.trackers[0].query; got != "" {
+			t.Errorf("query = %q, want empty (every open issue)", got)
+		}
+	})
+
+	t.Run("JIRA configured leaves GitHub issues off", func(t *testing.T) {
+		inRepo(t, "git@github.com:acme/app.git")
+		t.Setenv("JIRA_URL", "https://example.atlassian.net")
+		t.Setenv("JIRA_USERNAME", "me@example.com")
+		t.Setenv("JIRA_API_TOKEN", "tok")
+
+		a := newApp("", "", "", 0, true, false)
+		if len(a.trackers) != 1 || a.trackers[0].tracker.Name() != "JIRA" {
+			t.Errorf("trackers = %+v, want just JIRA", a.trackers)
+		}
+	})
+
+	t.Run("Linear configured leaves GitHub issues off", func(t *testing.T) {
+		inRepo(t, "git@github.com:acme/app.git")
+		t.Setenv("LINEAR_API_KEY", "linear-tok")
+
+		a := newApp("", "", "", 0, true, false)
+		if len(a.trackers) != 1 || a.trackers[0].tracker.Name() != "Linear" {
+			t.Errorf("trackers = %+v, want just Linear", a.trackers)
+		}
+	})
+
+	t.Run("outside a GitHub repo it says GitHub issues need one", func(t *testing.T) {
+		inRepo(t, "git@gitlab.com:acme/app.git")
+
+		a := newApp("", "", "", 0, true, false)
+		if len(a.trackers) != 0 {
+			t.Errorf("trackers = %+v, want none", a.trackers)
+		}
+		if a.trackerErr == nil || !strings.Contains(a.trackerErr.Error(), "GitHub repository") {
+			t.Errorf("trackerErr = %v, want a hint about running inside a GitHub repository", a.trackerErr)
+		}
+	})
+
+	t.Run("without a token there is no tracker", func(t *testing.T) {
+		inRepo(t, "git@github.com:acme/app.git")
+		t.Setenv("GITHUB_TOKEN", "")
+
+		a := newApp("", "", "", 0, true, false)
+		if len(a.trackers) != 0 || a.trackerErr == nil {
+			t.Errorf("trackers = %+v, err = %v, want none and an error", a.trackers, a.trackerErr)
 		}
 	})
 }

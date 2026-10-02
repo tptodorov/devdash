@@ -206,17 +206,46 @@ func newApp(jql, linearQuery, ghQuery string, period time.Duration, hyperlinks, 
 		a.trackers = append(a.trackers, trackerSource{client, linearQuery})
 	}
 
-	if len(a.trackers) == 0 && a.trackerErr == nil {
-		a.trackerErr = fmt.Errorf("no ticket tracker configured — set JIRA_URL, JIRA_USERNAME and JIRA_API_TOKEN, or LINEAR_API_KEY")
-	}
-	a.trackerCfgErr = a.trackerErr
-
 	if client, err := newGitHubClient(&http.Client{Timeout: 25 * time.Second}); err != nil {
 		a.ghCfg, a.ghErr = err, err
 	} else {
 		a.gh = client
 	}
+
+	// GitHub issues are the fallback tracker: a repository is assumed to use
+	// one ticketing system, so they are used only when nothing else is, and a
+	// partly set JIRA_* group still counts as "something else".
+	if len(a.trackers) == 0 && a.trackerErr == nil {
+		a.trackerErr = a.useGitHubIssues()
+	}
+	a.trackerCfgErr = a.trackerErr
 	return a
+}
+
+// useGitHubIssues adds the current repository's GitHub issues as the tracker,
+// or says why it cannot.
+func (a *app) useGitHubIssues() error {
+	err := fmt.Errorf("no ticket tracker configured — set JIRA_URL, JIRA_USERNAME and JIRA_API_TOKEN, or LINEAR_API_KEY, or run inside a GitHub repository with GITHUB_TOKEN set to use its issues")
+	if a.gh == nil {
+		return err
+	}
+	cwd, _ := os.Getwd()
+	owner, name, lerr := localRepo(cwd)
+	if lerr != nil {
+		return err
+	}
+	a.trackers = append(a.trackers, trackerSource{newGitHubIssues(a.gh, owner, name), defaultIssuesQuery})
+	return nil
+}
+
+// setIssuesQuery replaces the search qualifiers the GitHub issues tracker
+// adds to its repository scope. An empty query is meaningful: every open issue.
+func (a *app) setIssuesQuery(q string) {
+	for i, src := range a.trackers {
+		if _, ok := src.tracker.(*githubIssues); ok {
+			a.trackers[i].query = q
+		}
+	}
 }
 
 // jiraConfigured reports whether any JIRA environment variable is set, to

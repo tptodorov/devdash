@@ -7,11 +7,11 @@ devdash brings a developer's tracker tickets and GitHub pull requests together s
 ### Tickets
 
 **Ticket**:
-A Jira or Linear work item shown in the dashboard, usually assigned to the developer and unfinished.
+A Jira, Linear, or GitHub issue shown in the dashboard, usually assigned to the developer and unfinished.
 _Avoid_: Issue
 
 **Ticket key**:
-The short identifier for a ticket, such as `PROJ-482`. A key is unique within its tracker but may also exist in another tracker.
+The short identifier for a ticket, such as `PROJ-482`, or `#123` for a GitHub issue in the current repository. A key is unique within its tracker but may also exist in another tracker.
 _Avoid_: Issue ID
 
 **Status**:
