@@ -437,3 +437,35 @@ func TestSymphonyIsWorkingOnIt(t *testing.T) {
 		}
 	}
 }
+
+// For GitHub, Symphony's project_key names a repository as owner/repo, which
+// a ticket's #N key cannot show, so it is compared with the issue's own repo.
+func TestGitHubProjectKeyIsTheRepository(t *testing.T) {
+	cfg := testConfig()
+	cfg.Tracker.Kind = "github"
+	cfg.Tracker.Provider.ProjectKey = "acme/app"
+	cfg.Tracker.ActiveStates = []string{"Open"}
+
+	issue := func(url string) Ticket {
+		return Ticket{Key: "#12", URL: url, Source: "GitHub", Status: "Open"}
+	}
+
+	// Same repository, compared without regard to case as GitHub does.
+	if p := planSchedule(cfg, issue("https://github.com/Acme/App/issues/12")); p.refusal != "" {
+		t.Errorf("same repo refused: %s", p.refusal)
+	}
+	if p := planSchedule(cfg, issue("https://github.com/acme/other/issues/12")); !strings.Contains(p.refusal, "acme/app") {
+		t.Errorf("other repo refusal = %q, want it to name acme/app", p.refusal)
+	}
+
+	// Unscheduling applies the same scope.
+	scheduled := issue("https://github.com/acme/other/issues/12")
+	scheduled.Labels = []string{"symphony-ready"}
+	if p := planToggle(cfg, scheduled); !strings.Contains(p.refusal, "acme/app") {
+		t.Errorf("unschedule in other repo refusal = %q, want it to name acme/app", p.refusal)
+	}
+	scheduled.URL = "https://github.com/acme/app/issues/12"
+	if p := planToggle(cfg, scheduled); p.refusal != "" || !p.unschedule {
+		t.Errorf("unschedule in same repo = %+v, want an unschedule plan", p)
+	}
+}

@@ -84,12 +84,8 @@ func planToggle(cfg symphonyConfig, t Ticket) schedulePlan {
 	}
 
 	plan := schedulePlan{key: t.Key, unschedule: true}
-	if project := cfg.Tracker.Provider.ProjectKey; project != "" {
-		prefix, _, _ := strings.Cut(t.Key, "-")
-		if !strings.EqualFold(prefix, project) {
-			plan.refusal = fmt.Sprintf("Symphony only watches project %s", project)
-			return plan
-		}
+	if plan.refusal = projectRefusal(cfg, t); plan.refusal != "" {
+		return plan
 	}
 	if symphonyIsWorkingOnIt(t) {
 		plan.refusal = fmt.Sprintf("an agent is running %s; stop the session first", t.Key)
@@ -101,6 +97,30 @@ func planToggle(cfg symphonyConfig, t Ticket) schedulePlan {
 		}
 	}
 	return plan
+}
+
+// ticketProject is what WORKFLOW.md's project_key is compared with: the
+// owner/repo of a GitHub issue, or the key's prefix (PROJ in PROJ-12) for
+// JIRA and Linear.
+func ticketProject(t Ticket) string {
+	if t.Source == "GitHub" {
+		path, _ := strings.CutPrefix(t.URL, "https://github.com/")
+		owner, rest, _ := strings.Cut(path, "/")
+		repo, _, _ := strings.Cut(rest, "/")
+		return owner + "/" + repo
+	}
+	prefix, _, _ := strings.Cut(t.Key, "-")
+	return prefix
+}
+
+// projectRefusal explains why Symphony would not touch a ticket outside the
+// project WORKFLOW.md names, or is empty when it is inside or none is named.
+func projectRefusal(cfg symphonyConfig, t Ticket) string {
+	project := cfg.Tracker.Provider.ProjectKey
+	if project == "" || strings.EqualFold(ticketProject(t), project) {
+		return ""
+	}
+	return fmt.Sprintf("Symphony only watches project %s", project)
 }
 
 func containsFold(list []string, want string) bool {
@@ -115,19 +135,15 @@ func containsFold(list []string, want string) bool {
 // planSchedule works out how to make a ticket eligible for Symphony.
 //
 // Symphony's conditions come from the tracker block of WORKFLOW.md: the issue
-// must belong to project_key, carry every required_label, and sit in one of
+// must belong to project_key (a repository's owner/repo for GitHub), carry every required_label, and sit in one of
 // active_states. terminal_states are refused rather than reopened, since
 // restarting finished work is a bigger decision than a keystroke should make.
 func planSchedule(cfg symphonyConfig, t Ticket) schedulePlan {
 	plan := schedulePlan{key: t.Key}
 	tracker := cfg.Tracker
 
-	if project := tracker.Provider.ProjectKey; project != "" {
-		prefix, _, _ := strings.Cut(t.Key, "-")
-		if !strings.EqualFold(prefix, project) {
-			plan.refusal = fmt.Sprintf("Symphony only watches project %s", project)
-			return plan
-		}
+	if plan.refusal = projectRefusal(cfg, t); plan.refusal != "" {
+		return plan
 	}
 	if containsFold(tracker.TerminalStates, t.Status) {
 		plan.refusal = fmt.Sprintf("%s is %s, which Symphony treats as finished", t.Key, t.Status)

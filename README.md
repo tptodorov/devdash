@@ -316,6 +316,8 @@ and the colour says what Symphony is doing with it:
 
 `S` toggles a ticket from the tracker WORKFLOW.md names in `tracker.kind` (`jira`,
 `linear` or `github`; a ticket from any other tracker is refused with a message).
+A `provider.project_key` limits it to one project: the key prefix (`PROJ`) for
+JIRA and Linear, the repository (`owner/repo`) for GitHub.
 On a ticket Symphony would pick up it
 strips the required labels again, which is enough to release the ticket:
 Symphony re-reads the labels before it retries or reconsiders a blocked issue,
