@@ -301,12 +301,12 @@ func (g *githubIssues) Transitions(ctx context.Context, key string) ([]Transitio
 }
 
 // ApplyTransition closes the issue with the state reason the transition names.
-func (g *githubIssues) ApplyTransition(ctx context.Context, key, reason string, _ map[string]any) error {
+func (g *githubIssues) ApplyTransition(ctx context.Context, key string, tr Transition) error {
 	endpoint, err := g.issueURL(ctx, key, "")
 	if err != nil {
 		return err
 	}
-	return g.write(ctx, http.MethodPatch, endpoint, map[string]string{"state": "closed", "state_reason": reason})
+	return g.write(ctx, http.MethodPatch, endpoint, map[string]string{"state": "closed", "state_reason": tr.ID})
 }
 
 // UpdateLabels sets the issue's labels to its current ones minus remove plus

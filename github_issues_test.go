@@ -257,7 +257,7 @@ func TestGitHubIssuesApplyTransitionClosesTheIssue(t *testing.T) {
 	srv := &issuesServer{}
 	tr := srv.client(t)
 
-	if err := tr.ApplyTransition(context.Background(), "#12", "not_planned", nil); err != nil {
+	if err := tr.ApplyTransition(context.Background(), "#12", Transition{ID: "not_planned"}); err != nil {
 		t.Fatalf("ApplyTransition() error = %v", err)
 	}
 	want := `PATCH /repos/Acme/App/issues/12 {"state":"closed","state_reason":"not_planned"}`
@@ -270,7 +270,7 @@ func TestGitHubIssuesApplyTransitionRejectsAKeyThatIsNotAnIssueNumber(t *testing
 	srv := &issuesServer{}
 	tr := srv.client(t)
 
-	if err := tr.ApplyTransition(context.Background(), "ENG-1", "completed", nil); err == nil {
+	if err := tr.ApplyTransition(context.Background(), "ENG-1", Transition{ID: "completed"}); err == nil {
 		t.Fatal("ApplyTransition() should refuse a key that is not #<number>")
 	}
 	if len(srv.rest) != 0 {

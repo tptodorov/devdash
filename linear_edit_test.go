@@ -89,7 +89,7 @@ func TestLinearApplyTransitionMovesTheIssue(t *testing.T) {
 	srv := &linearEditServer{}
 	c := testLinearClient(t, srv.handler(t))
 
-	if err := c.ApplyTransition(context.Background(), "ENG-12", "s-done", nil); err != nil {
+	if err := c.ApplyTransition(context.Background(), "ENG-12", Transition{ID: "s-done"}); err != nil {
 		t.Fatalf("ApplyTransition() error = %v", err)
 	}
 	if len(srv.updates) != 1 || srv.updates[0]["stateId"] != "s-done" || srv.updates[0]["id"] != "ENG-12" {
@@ -101,7 +101,7 @@ func TestLinearApplyTransitionReportsAFailedUpdate(t *testing.T) {
 	srv := &linearEditServer{failWrite: true}
 	c := testLinearClient(t, srv.handler(t))
 
-	if err := c.ApplyTransition(context.Background(), "ENG-12", "s-done", nil); err == nil {
+	if err := c.ApplyTransition(context.Background(), "ENG-12", Transition{ID: "s-done"}); err == nil {
 		t.Fatal("ApplyTransition() should error when Linear reports success: false")
 	}
 }

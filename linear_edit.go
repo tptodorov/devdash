@@ -107,8 +107,8 @@ func (c *linearClient) update(ctx context.Context, vars map[string]any) error {
 }
 
 // ApplyTransition moves an issue to the workflow state with the given id.
-func (c *linearClient) ApplyTransition(ctx context.Context, key, stateID string, _ map[string]any) error {
-	return c.update(ctx, map[string]any{"id": key, "stateId": stateID})
+func (c *linearClient) ApplyTransition(ctx context.Context, key string, tr Transition) error {
+	return c.update(ctx, map[string]any{"id": key, "stateId": tr.ID})
 }
 
 const linearLabelsQuery = `

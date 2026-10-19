@@ -185,7 +185,7 @@ func applySchedule(ctx context.Context, ed Editor, plan schedulePlan) error {
 		if !strings.EqualFold(tr.To, plan.toStatus) || len(tr.Required) > 0 {
 			continue
 		}
-		return ed.ApplyTransition(ctx, plan.key, tr.ID, nil)
+		return ed.ApplyTransition(ctx, plan.key, tr)
 	}
 	return fmt.Errorf("no transition from %s to %s that needs no extra fields",
 		plan.key, plan.toStatus)

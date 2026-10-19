@@ -77,7 +77,8 @@ func TestEditorContract(t *testing.T) {
 				for i := range len(mustTransitions(t, impl.new(t))) {
 					f := impl.new(t) // a fresh ticket for each move
 					tr := mustTransitions(t, f)[i]
-					if err := f.ed.ApplyTransition(context.Background(), f.key, tr.ID, requiredValues(tr)); err != nil {
+					tr.Values = requiredValues(tr)
+					if err := f.ed.ApplyTransition(context.Background(), f.key, tr); err != nil {
 						t.Errorf("applying %q: %v", tr.To, err)
 						continue
 					}
@@ -93,7 +94,7 @@ func TestEditorContract(t *testing.T) {
 
 			t.Run("a transition that was not offered is refused", func(t *testing.T) {
 				f := impl.new(t)
-				if err := f.ed.ApplyTransition(context.Background(), f.key, "no-such-move", nil); err == nil {
+				if err := f.ed.ApplyTransition(context.Background(), f.key, Transition{ID: "no-such-move"}); err == nil {
 					t.Error("ApplyTransition accepted a transition the ticket was never offered")
 				}
 				if got, _ := reported(t, f); got.Status != "To Do" && got.Status != "Todo" && got.Status != "Open" {
@@ -176,7 +177,7 @@ func TestEditorContract(t *testing.T) {
 					if _, err := f.ed.Transitions(ctx, key); err == nil {
 						t.Errorf("Transitions(%q) succeeded", key)
 					}
-					if err := f.ed.ApplyTransition(ctx, key, "x", nil); err == nil {
+					if err := f.ed.ApplyTransition(ctx, key, Transition{ID: "x"}); err == nil {
 						t.Errorf("ApplyTransition(%q) succeeded", key)
 					}
 					if err := f.ed.UpdateLabels(ctx, key, []string{"a"}, nil); err == nil {

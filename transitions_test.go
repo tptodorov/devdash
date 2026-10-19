@@ -95,7 +95,7 @@ func TestApplyTransitionSendsFields(t *testing.T) {
 	})
 
 	fields := map[string]any{"resolution": map[string]string{"id": "10000"}}
-	if err := c.ApplyTransition(context.Background(), "PROJ-1", "41", fields); err != nil {
+	if err := c.ApplyTransition(context.Background(), "PROJ-1", Transition{ID: "41", Values: fields}); err != nil {
 		t.Fatalf("ApplyTransition() error = %v", err)
 	}
 
@@ -119,7 +119,7 @@ func TestApplyTransitionOmitsEmptyFields(t *testing.T) {
 		json.NewDecoder(r.Body).Decode(&body)
 		w.WriteHeader(http.StatusNoContent)
 	})
-	if err := c.ApplyTransition(context.Background(), "PROJ-1", "21", nil); err != nil {
+	if err := c.ApplyTransition(context.Background(), "PROJ-1", Transition{ID: "21"}); err != nil {
 		t.Fatalf("ApplyTransition() error = %v", err)
 	}
 	if _, present := body["fields"]; present {
@@ -159,7 +159,7 @@ func TestApplyTransitionSurfacesJIRAError(t *testing.T) {
 				w.WriteHeader(tc.status)
 				io.WriteString(w, tc.body)
 			})
-			err := c.ApplyTransition(context.Background(), "PROJ-1", "41", nil)
+			err := c.ApplyTransition(context.Background(), "PROJ-1", Transition{ID: "41"})
 			if err == nil {
 				t.Fatal("expected an error")
 			}

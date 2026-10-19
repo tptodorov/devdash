@@ -21,9 +21,9 @@ type Tracker interface {
 type Editor interface {
 	// Transitions lists the moves the ticket may make right now.
 	Transitions(ctx context.Context, key string) ([]Transition, error)
-	// ApplyTransition performs one of those moves, supplying any required
-	// field values keyed by the tracker's own field key.
-	ApplyTransition(ctx context.Context, key, transitionID string, fields map[string]any) error
+	// ApplyTransition performs one of those moves. A move with Required fields
+	// carries the chosen answers in its Values.
+	ApplyTransition(ctx context.Context, key string, tr Transition) error
 	// UpdateLabels adds and removes labels without touching other fields.
 	UpdateLabels(ctx context.Context, key string, add, remove []string) error
 }

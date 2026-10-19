@@ -799,14 +799,14 @@ func (a *app) applyTransition() tea.Cmd {
 	p.err = nil
 
 	editor, _ := a.editorFor(p.source)
-	key, id, to := p.key, p.chosen.ID, p.chosen.To
-	fields := p.values
+	key, chosen := p.key, p.chosen
+	chosen.Values = p.values
 
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
-		err := editor.ApplyTransition(ctx, key, id, fields)
-		return transitionAppliedMsg{key: key, to: to, err: err}
+		err := editor.ApplyTransition(ctx, key, chosen)
+		return transitionAppliedMsg{key: key, to: chosen.To, err: err}
 	}
 }
 

@@ -35,6 +35,9 @@ type Transition struct {
 	To         string
 	ToCategory string
 	Required   []RequiredField
+	// Values answers Required, keyed by JIRA field key, once the user has
+	// chosen them; only JIRA asks for any.
+	Values map[string]any
 }
 
 // Blocked reports the required fields this tool cannot supply, because JIRA
@@ -146,14 +149,14 @@ func (c *jiraClient) Transitions(ctx context.Context, key string) ([]Transition,
 	return out, nil
 }
 
-// ApplyTransition moves an issue, supplying any required field values keyed by
-// JIRA field key.
-func (c *jiraClient) ApplyTransition(ctx context.Context, key, transitionID string, fields map[string]any) error {
+// ApplyTransition moves an issue, supplying the values chosen for any required
+// fields.
+func (c *jiraClient) ApplyTransition(ctx context.Context, key string, tr Transition) error {
 	payload := map[string]any{
-		"transition": map[string]string{"id": transitionID},
+		"transition": map[string]string{"id": tr.ID},
 	}
-	if len(fields) > 0 {
-		payload["fields"] = fields
+	if len(tr.Values) > 0 {
+		payload["fields"] = tr.Values
 	}
 
 	body, status, err := c.post(ctx, "/rest/api/3/issue/"+url.PathEscape(key)+"/transitions", payload)

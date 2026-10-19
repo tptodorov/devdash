@@ -249,8 +249,8 @@ func (f *fakeEditor) Transitions(_ context.Context, key string) ([]Transition, e
 	return []Transition{{ID: "7", Name: "Done", To: "Done", ToCategory: "Done"}}, nil
 }
 
-func (f *fakeEditor) ApplyTransition(_ context.Context, key, id string, _ map[string]any) error {
-	f.applied = append(f.applied, key+":"+id)
+func (f *fakeEditor) ApplyTransition(_ context.Context, key string, tr Transition) error {
+	f.applied = append(f.applied, key+":"+tr.ID)
 	return nil
 }
 
