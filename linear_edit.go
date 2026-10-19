@@ -112,18 +112,21 @@ func (c *linearClient) ApplyTransition(ctx context.Context, key, stateID string,
 }
 
 const linearLabelsQuery = `
-query Labels($id: String!) {
+query Labels($id: String!, $names: IssueLabelFilter, $lookup: Boolean!) {
   issue(id: $id) {
     id
     team { id }
     labels { nodes { id name } }
   }
-  issueLabels(first: 250) { nodes { id name team { id } } }
+  issueLabels(filter: $names, first: 250) @include(if: $lookup) { nodes { id name team { id } } }
 }`
 
-// UpdateLabels adds and removes labels by name. Linear sets an issue's labels
-// as a whole, so the new set is worked out from the current one. A label to add
-// must already exist, on the issue's team or workspace-wide.
+// UpdateLabels adds and removes labels by name, without regard to case. Linear
+// sets an issue's labels as a whole, so the new set is worked out from the
+// current one and written in one request, which applies whole or not at all.
+// The labels to add are looked up by name, and each must already exist on the
+// issue's team or workspace-wide; one that does not is an error naming it, and
+// nothing is written.
 func (c *linearClient) UpdateLabels(ctx context.Context, key string, add, remove []string) error {
 	if len(add) == 0 && len(remove) == 0 {
 		return nil
@@ -149,10 +152,22 @@ func (c *linearClient) UpdateLabels(ctx context.Context, key string, add, remove
 			} `json:"nodes"`
 		} `json:"issueLabels"`
 	}
-	if err := c.run(ctx, linearLabelsQuery, map[string]any{"id": key}, &res); err != nil {
+	vars := map[string]any{"id": key, "lookup": len(add) > 0}
+	if len(add) > 0 {
+		var byName []map[string]any
+		for _, name := range add {
+			byName = append(byName, map[string]any{"name": map[string]any{"eqIgnoreCase": name}})
+		}
+		vars["names"] = map[string]any{"or": byName}
+	}
+	if err := c.run(ctx, linearLabelsQuery, vars, &res); err != nil {
 		return err
 	}
 
+	var current []string
+	for _, l := range res.Issue.Labels.Nodes {
+		current = append(current, l.ID)
+	}
 	ids := []string{}
 	for _, l := range res.Issue.Labels.Nodes {
 		if !containsFold(remove, l.Name) {
@@ -168,11 +183,14 @@ func (c *linearClient) UpdateLabels(ctx context.Context, key string, add, remove
 			}
 		}
 		if found == "" {
-			return fmt.Errorf("label %q does not exist in Linear for %s", name, key)
+			return fmt.Errorf("label %q does not exist in Linear on %s's team or workspace", name, key)
 		}
 		if !slices.Contains(ids, found) {
 			ids = append(ids, found)
 		}
+	}
+	if slices.Equal(ids, current) {
+		return nil
 	}
 	return c.update(ctx, map[string]any{"id": res.Issue.ID, "labelIds": ids})
 }

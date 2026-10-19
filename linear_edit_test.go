@@ -13,9 +13,10 @@ import (
 // linearEditServer answers the three kinds of request the Linear editor makes
 // and records the issueUpdate input it receives.
 type linearEditServer struct {
-	updates   []map[string]any // variables of each issueUpdate
-	lookups   int
-	failWrite bool
+	updates    []map[string]any // variables of each issueUpdate
+	lookups    int
+	lookupVars map[string]any // variables of the last label lookup
+	failWrite  bool
 }
 
 func (s *linearEditServer) handler(t *testing.T) http.HandlerFunc {
@@ -37,6 +38,7 @@ func (s *linearEditServer) handler(t *testing.T) http.HandlerFunc {
 			io.WriteString(w, `{"data":{"issueUpdate":{"success":`+ok+`}}}`)
 		case strings.Contains(req.Query, "issueLabels"):
 			s.lookups++
+			s.lookupVars = req.Variables
 			io.WriteString(w, `{"data":{
 			  "issue":{"id":"uuid-1","team":{"id":"team-1"},
 			    "labels":{"nodes":[{"id":"l-bug","name":"bug"},{"id":"l-keep","name":"keep"}]}},
@@ -153,5 +155,38 @@ func TestLinearUpdateLabelsWithNothingToDoSendsNothing(t *testing.T) {
 	}
 	if srv.lookups != 0 || len(srv.updates) != 0 {
 		t.Errorf("made %d lookups and %d updates, want none", srv.lookups, len(srv.updates))
+	}
+}
+
+// The labels to add are looked up by name, so a workspace with more labels than
+// one page holds still finds them, and a missing one is really missing.
+func TestLinearUpdateLabelsLooksUpOnlyTheLabelsToAdd(t *testing.T) {
+	srv := &linearEditServer{}
+	c := testLinearClient(t, srv.handler(t))
+
+	if err := c.UpdateLabels(context.Background(), "ENG-12", []string{"symphony-ready"}, nil); err != nil {
+		t.Fatalf("UpdateLabels() error = %v", err)
+	}
+	got, _ := json.Marshal(srv.lookupVars["names"])
+	if want := `{"or":[{"name":{"eqIgnoreCase":"symphony-ready"}}]}`; string(got) != want {
+		t.Errorf("label filter = %s, want %s", got, want)
+	}
+	if srv.lookupVars["lookup"] != true {
+		t.Errorf("lookup = %v, want true when adding", srv.lookupVars["lookup"])
+	}
+}
+
+func TestLinearUpdateLabelsThatChangesNothingWritesNothing(t *testing.T) {
+	srv := &linearEditServer{}
+	c := testLinearClient(t, srv.handler(t))
+
+	if err := c.UpdateLabels(context.Background(), "ENG-12", nil, []string{"never-there"}); err != nil {
+		t.Fatalf("UpdateLabels() error = %v", err)
+	}
+	if len(srv.updates) != 0 {
+		t.Errorf("sent %+v, want nothing written", srv.updates)
+	}
+	if srv.lookupVars["lookup"] != false {
+		t.Errorf("lookup = %v, want false: there is nothing to add", srv.lookupVars["lookup"])
 	}
 }

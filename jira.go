@@ -240,17 +240,33 @@ func (c *jiraClient) ChildCounts(ctx context.Context, candidates []string) (map[
 }
 
 // UpdateLabels adds and removes labels on an issue without touching any other
-// field, in a single request so the two never half-apply.
+// field. JIRA labels are case-sensitive, while the dashboard matches them
+// without regard to case, so the issue's labels are read first: a label to
+// remove is removed in whatever case the issue carries it, and one the issue
+// already has in another case is not added again. The change is then made in
+// a single request, so it applies whole or not at all.
 func (c *jiraClient) UpdateLabels(ctx context.Context, key string, add, remove []string) error {
 	if len(add) == 0 && len(remove) == 0 {
 		return nil
 	}
-	ops := make([]map[string]string, 0, len(add)+len(remove))
-	for _, l := range add {
-		ops = append(ops, map[string]string{"add": l})
+	current, err := c.labels(ctx, key)
+	if err != nil {
+		return err
 	}
-	for _, l := range remove {
-		ops = append(ops, map[string]string{"remove": l})
+
+	var ops []map[string]string
+	for _, l := range current {
+		if containsFold(remove, l) {
+			ops = append(ops, map[string]string{"remove": l})
+		}
+	}
+	for _, l := range add {
+		if !containsFold(current, l) {
+			ops = append(ops, map[string]string{"add": l})
+		}
+	}
+	if len(ops) == 0 {
+		return nil
 	}
 	payload := map[string]any{"update": map[string]any{"labels": ops}}
 
@@ -266,6 +282,31 @@ func (c *jiraClient) UpdateLabels(ctx context.Context, key string, add, remove [
 	default:
 		return fmt.Errorf("%s: %s", key, jiraErrorMessage(body, status))
 	}
+}
+
+// labels reads the labels an issue carries, spelled as JIRA stores them.
+func (c *jiraClient) labels(ctx context.Context, key string) ([]string, error) {
+	q := url.Values{}
+	q.Set("fields", "labels")
+	body, status, err := c.get(ctx, "/rest/api/3/issue/"+url.PathEscape(key), q)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return nil, fmt.Errorf("not allowed to read %s (%d)", key, status)
+	case status != http.StatusOK:
+		return nil, fmt.Errorf("%s: %s", key, jiraErrorMessage(body, status))
+	}
+	var issue struct {
+		Fields struct {
+			Labels []string `json:"labels"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal(body, &issue); err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", key, err)
+	}
+	return issue.Fields.Labels, nil
 }
 
 // verifyAuth checks the credentials actually identify a user.

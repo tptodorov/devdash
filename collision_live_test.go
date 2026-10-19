@@ -59,22 +59,6 @@ func waitForOutput(t *testing.T, out *syncBuf, substr string, timeout time.Durat
 	t.Fatalf("timed out after %s waiting for rendered output to contain %q; last frame:\n%s", timeout, substr, out.String())
 }
 
-// waitForNewOutput is like waitForOutput but only looks at bytes rendered
-// after since, so a stale match from an earlier assertion in the same test
-// (e.g. a flash message still sitting in the accumulated buffer) cannot make
-// a later, unrelated check pass vacuously.
-func waitForNewOutput(t *testing.T, out *syncBuf, since int, substr string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if full := out.String(); len(full) >= since && strings.Contains(full[since:], substr) {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("timed out after %s waiting for new rendered output to contain %q; output since marker:\n%s", timeout, substr, out.String()[min(since, out.Len()):])
-}
-
 // newJIRAFixture serves the two JIRA endpoints fetchTickets needs: the ticket
 // search and the child-count search. It reports category/status from the
 // atomic swapped so a test can trigger a reordering refresh.

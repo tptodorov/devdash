@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"io"
@@ -18,9 +19,9 @@ type issuesServer struct {
 	afters   []string
 	pages    []string
 	rest     []string // "METHOD /path body" for each REST write
-	// noSuchLabel makes removing a label answer 404, as GitHub does when the
-	// issue does not carry it.
-	noSuchLabel bool
+	// issue is what reading the issue returns; an open issue labelled
+	// "needs triage" and "keep" when empty.
+	issue string
 }
 
 func (s *issuesServer) client(t *testing.T) *githubIssues {
@@ -41,12 +42,12 @@ func (s *issuesServer) client(t *testing.T) *githubIssues {
 		io.WriteString(w, page)
 	})
 	mux.HandleFunc("/repos/Acme/App/issues/", func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		s.rest = append(s.rest, strings.TrimSpace(r.Method+" "+r.URL.EscapedPath()+" "+string(b)))
-		if r.Method == http.MethodDelete && s.noSuchLabel {
-			w.WriteHeader(http.StatusNotFound)
+		if r.Method == http.MethodGet {
+			io.WriteString(w, cmp.Or(s.issue, `{"state":"open","labels":[{"name":"needs triage"},{"name":"keep"}]}`))
 			return
 		}
+		b, _ := io.ReadAll(r.Body)
+		s.rest = append(s.rest, strings.TrimSpace(r.Method+" "+r.URL.EscapedPath()+" "+string(b)))
 		w.WriteHeader(http.StatusOK)
 		io.WriteString(w, `{}`)
 	})
@@ -277,28 +278,41 @@ func TestGitHubIssuesApplyTransitionRejectsAKeyThatIsNotAnIssueNumber(t *testing
 	}
 }
 
-func TestGitHubIssuesUpdateLabels(t *testing.T) {
+func TestGitHubIssuesTransitionsRefusesAPullRequestOrAClosedIssue(t *testing.T) {
+	for issue, want := range map[string]string{
+		`{"state":"open","pull_request":{"url":"x"},"labels":[]}`: "pull request",
+		`{"state":"closed","labels":[]}`:                          "closed",
+	} {
+		tr := (&issuesServer{issue: issue}).client(t)
+		if _, err := tr.Transitions(context.Background(), "#12"); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Transitions() on %s error = %v, want it to say %q", issue, err, want)
+		}
+	}
+}
+
+func TestGitHubIssuesUpdateLabelsSetsTheWholeSetInOneRequest(t *testing.T) {
 	srv := &issuesServer{}
 	tr := srv.client(t)
 
-	if err := tr.UpdateLabels(context.Background(), "#12", []string{"symphony-ready", "p1"}, []string{"needs triage"}); err != nil {
+	// "NEEDS TRIAGE" names the issue's "needs triage"; "Keep" is already there.
+	if err := tr.UpdateLabels(context.Background(), "#12", []string{"symphony-ready", "Keep"}, []string{"NEEDS TRIAGE"}); err != nil {
 		t.Fatalf("UpdateLabels() error = %v", err)
 	}
-	want := []string{
-		`POST /repos/Acme/App/issues/12/labels {"labels":["symphony-ready","p1"]}`,
-		`DELETE /repos/Acme/App/issues/12/labels/needs%20triage`,
-	}
+	want := []string{`PUT /repos/Acme/App/issues/12/labels {"labels":["keep","symphony-ready"]}`}
 	if !slices.Equal(srv.rest, want) {
 		t.Errorf("requests = %q, want %q", srv.rest, want)
 	}
 }
 
-func TestGitHubIssuesRemovingAnAbsentLabelIsFine(t *testing.T) {
-	srv := &issuesServer{noSuchLabel: true}
+func TestGitHubIssuesUpdateLabelsThatChangesNothingWritesNothing(t *testing.T) {
+	srv := &issuesServer{}
 	tr := srv.client(t)
 
-	if err := tr.UpdateLabels(context.Background(), "#12", nil, []string{"gone"}); err != nil {
-		t.Fatalf("UpdateLabels() error = %v, want removing an absent label to succeed", err)
+	if err := tr.UpdateLabels(context.Background(), "#12", []string{"keep"}, []string{"gone"}); err != nil {
+		t.Fatalf("UpdateLabels() error = %v", err)
+	}
+	if len(srv.rest) != 0 {
+		t.Errorf("sent %q, want nothing", srv.rest)
 	}
 }
 

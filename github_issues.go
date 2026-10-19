@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -246,10 +245,55 @@ func (g *githubIssues) write(ctx context.Context, method, endpoint string, paylo
 	}
 }
 
+// issue reads an issue, so a write is only ever attempted against one that
+// exists, is open, and is an issue rather than a pull request (GitHub numbers
+// both together, and its issues endpoint answers for both).
+func (g *githubIssues) issue(ctx context.Context, key string) (labels []string, err error) {
+	endpoint, err := g.issueURL(ctx, key, "")
+	if err != nil {
+		return nil, err
+	}
+	body, status, err := g.gh.do(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case status == http.StatusNotFound:
+		return nil, fmt.Errorf("%s does not exist in %s", key, g.canonical(ctx))
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return nil, fmt.Errorf("github refused to read %s (%d) — check GITHUB_TOKEN", key, status)
+	case status != http.StatusOK:
+		return nil, fmt.Errorf("reading %s: github returned %d: %s", key, status, firstLine(body))
+	}
+	var issue struct {
+		State       string    `json:"state"`
+		PullRequest *struct{} `json:"pull_request"`
+		Labels      []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+	}
+	if err := json.Unmarshal(body, &issue); err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", key, err)
+	}
+	if issue.PullRequest != nil {
+		return nil, fmt.Errorf("%s is a pull request, not an issue", key)
+	}
+	if issue.State != "open" {
+		return nil, fmt.Errorf("%s is %s", key, issue.State)
+	}
+	for _, l := range issue.Labels {
+		labels = append(labels, l.Name)
+	}
+	return labels, nil
+}
+
 // Transitions offers closing the issue, as completed or as not planned. Only
 // open issues are shown and GitHub has no other workflow, so those are the only
 // moves; an issue's In Progress is derived from its pull requests, not set.
-func (g *githubIssues) Transitions(context.Context, string) ([]Transition, error) {
+func (g *githubIssues) Transitions(ctx context.Context, key string) ([]Transition, error) {
+	if _, err := g.issue(ctx, key); err != nil {
+		return nil, err
+	}
 	return []Transition{
 		{ID: "completed", Name: "Close", To: "Closed", ToCategory: "Done"},
 		{ID: "not_planned", Name: "Close as not planned", To: "Closed (not planned)", ToCategory: "Done"},
@@ -265,26 +309,37 @@ func (g *githubIssues) ApplyTransition(ctx context.Context, key, reason string, 
 	return g.write(ctx, http.MethodPatch, endpoint, map[string]string{"state": "closed", "state_reason": reason})
 }
 
-// UpdateLabels adds labels, creating any the repository lacks, and removes
-// others. Removing a label the issue does not carry is not an error.
+// UpdateLabels sets the issue's labels to its current ones minus remove plus
+// add, in one request, so the change applies whole or not at all. Names match
+// without regard to case, as GitHub's do: a label already carried in another
+// case is kept as it is. A label the repository lacks is created.
 func (g *githubIssues) UpdateLabels(ctx context.Context, key string, add, remove []string) error {
-	if len(add) > 0 {
-		endpoint, err := g.issueURL(ctx, key, "/labels")
-		if err != nil {
-			return err
-		}
-		if err := g.write(ctx, http.MethodPost, endpoint, map[string][]string{"labels": add}); err != nil {
-			return err
+	if len(add) == 0 && len(remove) == 0 {
+		return nil
+	}
+	current, err := g.issue(ctx, key)
+	if err != nil {
+		return err
+	}
+
+	labels := []string{}
+	for _, l := range current {
+		if !containsFold(remove, l) {
+			labels = append(labels, l)
 		}
 	}
-	for _, label := range remove {
-		endpoint, err := g.issueURL(ctx, key, "/labels/"+url.PathEscape(label))
-		if err != nil {
-			return err
-		}
-		if err := g.write(ctx, http.MethodDelete, endpoint, nil, http.StatusNotFound); err != nil {
-			return err
+	for _, l := range add {
+		if !containsFold(labels, l) {
+			labels = append(labels, l)
 		}
 	}
-	return nil
+	if slices.Equal(labels, current) {
+		return nil
+	}
+
+	endpoint, err := g.issueURL(ctx, key, "/labels")
+	if err != nil {
+		return err
+	}
+	return g.write(ctx, http.MethodPut, endpoint, map[string][]string{"labels": labels})
 }
