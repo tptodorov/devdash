@@ -73,6 +73,11 @@ or set `GOBIN` first:
 GOBIN="$HOME/.local/bin" go install github.com/tptodorov/devdash@latest
 ```
 
+Or, without Go, download the archive for your system from
+[Releases](https://github.com/tptodorov/devdash/releases), check it against
+`checksums.txt`, and put the `devdash` binary on your `PATH`. `devdash -version`
+says which one you have.
+
 ## Configure
 
 Set up JIRA, Linear, or both — devdash activates whichever tracker has its
@@ -356,6 +361,7 @@ nothing is reported — that is the ordinary case.
 | `-pr-query` | GitHub search selecting which pull requests to show; overrides repo scoping | `DEVDASH_PR_QUERY` | open and recently merged, scoped to this repo |
 | `-include-archived` | keep pull requests whose repository is archived | — | archived hidden |
 | `-no-links` | render plain text instead of OSC 8 terminal hyperlinks | — | hyperlinks on |
+| `-version` | print the version and exit | — | — |
 
 There is also a `help` subcommand, which reports whether each required
 environment variable is set and lists every API call the tool makes:
@@ -465,6 +471,29 @@ you do not mind moving. It transitions the ticket and moves it back:
 ```bash
 DEVDASH_LIVE_TICKET=PROJ-482 go test -run TestLiveTransitionRoundTrip -v
 ```
+
+Two more write to real trackers and are skipped unless asked. Each works on a
+throwaway ticket it creates, and removes its traces afterwards:
+
+```bash
+DEVDASH_LIVE_GITHUB_WRITES=1 GITHUB_TOKEN=$(gh auth token) go test -run TestLiveGitHubIssuesEditing -v
+DEVDASH_LIVE_LINEAR_WRITES=1 LINEAR_API_KEY=... go test -run TestLiveLinearEditing -v
+```
+
+### Releasing
+
+Push a version tag:
+
+```bash
+git tag -a v0.2.0 -m "devdash v0.2.0"
+git push origin v0.2.0
+```
+
+The Release workflow runs the checks, builds macOS and Linux binaries for amd64
+and arm64 with the version stamped in, and publishes a release with the archives,
+`checksums.txt` and notes generated from the merged pull requests. Edit the notes
+on GitHub afterwards if you like. To attach binaries to a tag released before the
+workflow existed, run it by hand: `gh workflow run release.yml -f tag=v0.1.0`.
 
 ## Licence
 

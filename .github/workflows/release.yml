@@ -1,0 +1,120 @@
+name: Release
+
+# Pushing a version tag (v1.2.3) builds the binaries and publishes a release
+# with them. Run it by hand with an existing tag to attach binaries to a
+# release made before this workflow existed.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and attach binaries to, e.g. v0.1.0
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: check the tag is a version
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$TAG is not a version tag like v1.2.3"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -race ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: darwin, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          name="devdash_${TAG#v}_${GOOS}_${GOARCH}"
+          mkdir -p "dist/$name"
+          go build -trimpath -ldflags "-s -w -X main.version=$TAG" -o "dist/$name/devdash" .
+          cp README.md LICENSE "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          echo "ARCHIVE=$name" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: dist/${{ env.ARCHIVE }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: checksums
+        run: cd dist && sha256sum -- *.tar.gz > checksums.txt && cat checksums.txt
+
+      # A tag released before this workflow already has notes; keep them and
+      # only add the files. A new tag gets a release with generated notes, a
+      # pre-release when the version has a suffix such as -rc.1.
+      - name: publish
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            pre=()
+            [[ "$TAG" == *-* ]] && pre=(--prerelease)
+            gh release create "$TAG" dist/* --verify-tag --title "devdash $TAG" --generate-notes "${pre[@]}"
+          fi
