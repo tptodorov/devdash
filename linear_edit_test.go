@@ -82,7 +82,8 @@ func (s *linearEditServer) handler(t *testing.T) http.HandlerFunc {
 			    {"id":"s-done","name":"Done","type":"completed","position":3},
 			    {"id":"s-todo","name":"Todo","type":"unstarted","position":1},
 			    {"id":"s-prog","name":"In Progress","type":"started","position":2},
-			    {"id":"s-back","name":"Backlog","type":"backlog","position":0}]}}}}}`)
+			    {"id":"s-back","name":"Backlog","type":"backlog","position":0},
+			    {"id":"s-dup","name":"Duplicate","type":"duplicate","position":4}]}}}}}`)
 		default:
 			t.Errorf("unexpected query: %s", req.Query)
 		}
@@ -229,5 +230,22 @@ func TestLinearUpdateLabelsThatChangesNothingWritesNothing(t *testing.T) {
 	}
 	if srv.lookupVars["lookup"] != false {
 		t.Errorf("lookup = %v, want false: there is nothing to add", srv.lookupVars["lookup"])
+	}
+}
+
+// Linear only moves an issue to a duplicate state together with the issue it
+// duplicates, which the picker cannot supply, so that move is never offered.
+func TestLinearTransitionsLeaveOutTheDuplicateState(t *testing.T) {
+	srv := &linearEditServer{}
+	c := testLinearClient(t, srv.handler(t))
+
+	got, err := c.Transitions(context.Background(), "ENG-12")
+	if err != nil {
+		t.Fatalf("Transitions() error = %v", err)
+	}
+	for _, tr := range got {
+		if tr.ID == "s-dup" {
+			t.Errorf("offered %+v, which Linear refuses without a duplicate relation", tr)
+		}
 	}
 }

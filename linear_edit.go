@@ -50,7 +50,7 @@ query States($id: String!) {
 }`
 
 // Transitions lists the workflow states of the issue's team other than the one
-// it is in. Linear lets an issue move to any state, so unlike JIRA the set
+// it is in and the duplicate state. Linear lets an issue move to any state, so unlike JIRA the set
 // does not depend on where it is, and no move needs extra fields.
 func (c *linearClient) Transitions(ctx context.Context, key string) ([]Transition, error) {
 	var res struct {
@@ -74,7 +74,9 @@ func (c *linearClient) Transitions(ctx context.Context, key string) ([]Transitio
 
 	var out []Transition
 	for _, s := range states {
-		if s.ID == res.Issue.State.ID {
+		// A duplicate state needs the issue it duplicates, which a plain move
+		// cannot give, so Linear would refuse it.
+		if s.ID == res.Issue.State.ID || s.Type == "duplicate" {
 			continue
 		}
 		out = append(out, Transition{

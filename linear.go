@@ -11,11 +11,11 @@ import (
 )
 
 // DefaultLinearFilter selects every issue assigned to the current user whose
-// workflow state has not reached the completed or canceled category,
+// workflow state is not finished: completed, canceled or duplicate,
 // mirroring DefaultJQL's "not Done" scope for JIRA. It is a Linear
 // IssueFilter, encoded as the JSON Linear's GraphQL API expects for the
 // assignedIssues(filter:) argument.
-const DefaultLinearFilter = `{"state":{"type":{"nin":["completed","canceled"]}}}`
+const DefaultLinearFilter = `{"state":{"type":{"nin":["completed","canceled","duplicate"]}}}`
 
 const linearEndpoint = "https://api.linear.app/graphql"
 
@@ -162,7 +162,7 @@ func (c *linearClient) Tickets(ctx context.Context, query string) ([]Ticket, err
 // together.
 func linearCategory(stateType string) string {
 	switch stateType {
-	case "completed", "canceled":
+	case "completed", "canceled", "duplicate":
 		return "Done"
 	case "started":
 		return "In Progress"
