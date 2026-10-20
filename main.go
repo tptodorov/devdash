@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -43,6 +44,7 @@ func main() {
 		"print a single snapshot and exit instead of running the interactive UI")
 	demo := flag.Bool("demo", false,
 		"show sample data instead of contacting any tracker or GitHub; needs no credentials")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	includeArchived := flag.Bool("include-archived", false,
 		"keep pull requests whose repository is archived (hidden by default)")
 
@@ -56,6 +58,12 @@ func main() {
 		return
 	}
 	flag.Parse()
+
+	if *showVersion {
+		info, ok := debug.ReadBuildInfo()
+		fmt.Println("devdash", versionString(version, info, ok))
+		return
+	}
 
 	if flag.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "devdash: unexpected argument %q; try \"devdash help\"\n", flag.Arg(0))
