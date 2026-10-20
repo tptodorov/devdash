@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -17,7 +19,15 @@ type linearEditServer struct {
 	lookups    int
 	lookupVars map[string]any // variables of the last label lookup
 	failWrite  bool
+	// labelOps records each label mutation as +id or -id; labelWrites counts
+	// the requests that carried them.
+	labelOps    []string
+	labelWrites int
+	failRemove  bool // removals fail, as Linear reports a per-field error
 }
+
+// linearLabelOpRE reads one aliased label mutation out of a request.
+var linearLabelOpRE = regexp.MustCompile(`(\w+): issue(Add|Remove)Label\(id: \$id, labelId: \$(\w+)\)`)
 
 func (s *linearEditServer) handler(t *testing.T) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -29,6 +39,25 @@ func (s *linearEditServer) handler(t *testing.T) http.HandlerFunc {
 			t.Fatalf("decoding request: %v", err)
 		}
 		switch {
+		case strings.Contains(req.Query, "issueAddLabel") || strings.Contains(req.Query, "issueRemoveLabel"):
+			s.labelWrites++
+			data, errs := []string{}, []string{}
+			for _, m := range linearLabelOpRE.FindAllStringSubmatch(req.Query, -1) {
+				alias, op, id := m[1], m[2], req.Variables[m[3]].(string)
+				if op == "Remove" && s.failRemove {
+					data = append(data, fmt.Sprintf(`%q:null`, alias))
+					errs = append(errs, fmt.Sprintf(`{"message":"Label is locked","path":[%q]}`, alias))
+					continue
+				}
+				sign := map[string]string{"Add": "+", "Remove": "-"}[op]
+				s.labelOps = append(s.labelOps, sign+id)
+				data = append(data, fmt.Sprintf(`%q:{"success":true}`, alias))
+			}
+			resp := `{"data":{` + strings.Join(data, ",") + `}`
+			if len(errs) > 0 {
+				resp += `,"errors":[` + strings.Join(errs, ",") + `]`
+			}
+			io.WriteString(w, resp+"}")
 		case strings.Contains(req.Query, "issueUpdate"):
 			s.updates = append(s.updates, req.Variables)
 			ok := "true"
@@ -106,29 +135,41 @@ func TestLinearApplyTransitionReportsAFailedUpdate(t *testing.T) {
 	}
 }
 
-func TestLinearUpdateLabelsAddsAndRemoves(t *testing.T) {
+// Labels are added and removed one by one rather than by replacing the set, so
+// a label someone else added in the meantime is never lost.
+func TestLinearUpdateLabelsAddsAndRemovesEachLabel(t *testing.T) {
 	srv := &linearEditServer{}
 	c := testLinearClient(t, srv.handler(t))
 
-	// Label names match without regard to case, like the rest of the dashboard.
-	err := c.UpdateLabels(context.Background(), "ENG-12", []string{"symphony-ready", "workspace-wide"}, []string{"BUG"})
+	// Names match without regard to case; "keep" is already there.
+	err := c.UpdateLabels(context.Background(), "ENG-12", []string{"symphony-ready", "workspace-wide", "KEEP"}, []string{"BUG"})
 	if err != nil {
 		t.Fatalf("UpdateLabels() error = %v", err)
 	}
-	if len(srv.updates) != 1 {
-		t.Fatalf("got %d updates, want 1", len(srv.updates))
+	got := slices.Sorted(slices.Values(srv.labelOps))
+	if want := []string{"+l-ready", "+l-ws", "-l-bug"}; !slices.Equal(got, want) {
+		t.Errorf("label ops = %v, want %v", got, want)
 	}
-	ids, _ := srv.updates[0]["labelIds"].([]any)
-	var got []string
-	for _, id := range ids {
-		got = append(got, id.(string))
+	if srv.labelWrites != 1 || len(srv.updates) != 0 {
+		t.Errorf("made %d label requests and %d set-replacing updates, want 1 and 0", srv.labelWrites, len(srv.updates))
 	}
-	slices.Sort(got)
-	if want := []string{"l-keep", "l-ready", "l-ws"}; !slices.Equal(got, want) {
-		t.Errorf("labelIds = %v, want %v", got, want)
+}
+
+// Linear applies the mutations of one request one by one, so a failure can
+// leave part of the change applied. The error must say exactly what was.
+func TestLinearUpdateLabelsSaysWhatAPartialFailureApplied(t *testing.T) {
+	srv := &linearEditServer{failRemove: true}
+	c := testLinearClient(t, srv.handler(t))
+
+	err := c.UpdateLabels(context.Background(), "ENG-12", []string{"symphony-ready"}, []string{"bug"})
+	if err == nil {
+		t.Fatal("UpdateLabels() reported success though a removal failed")
 	}
-	if srv.updates[0]["id"] != "uuid-1" {
-		t.Errorf("updated %v, want the issue's own id", srv.updates[0]["id"])
+	// Labels are named as Linear spells them.
+	for _, want := range []string{`added "Symphony-Ready"`, `could not remove "bug"`, "Label is locked", "ENG-12"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not say %q", err, want)
+		}
 	}
 }
 
@@ -141,8 +182,8 @@ func TestLinearUpdateLabelsNamesALabelThatDoesNotExist(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `"elsewhere"`) {
 		t.Fatalf("UpdateLabels() error = %v, want it to name the missing label", err)
 	}
-	if len(srv.updates) != 0 {
-		t.Errorf("sent %+v, want nothing written", srv.updates)
+	if len(srv.updates) != 0 || srv.labelWrites != 0 {
+		t.Errorf("wrote %d updates and %d label requests, want nothing written", len(srv.updates), srv.labelWrites)
 	}
 }
 
@@ -183,8 +224,8 @@ func TestLinearUpdateLabelsThatChangesNothingWritesNothing(t *testing.T) {
 	if err := c.UpdateLabels(context.Background(), "ENG-12", nil, []string{"never-there"}); err != nil {
 		t.Fatalf("UpdateLabels() error = %v", err)
 	}
-	if len(srv.updates) != 0 {
-		t.Errorf("sent %+v, want nothing written", srv.updates)
+	if len(srv.updates) != 0 || srv.labelWrites != 0 {
+		t.Errorf("wrote %d updates and %d label requests, want nothing written", len(srv.updates), srv.labelWrites)
 	}
 	if srv.lookupVars["lookup"] != false {
 		t.Errorf("lookup = %v, want false: there is nothing to add", srv.lookupVars["lookup"])

@@ -22,6 +22,9 @@ type issuesServer struct {
 	// issue is what reading the issue returns; an open issue labelled
 	// "needs triage" and "keep" when empty.
 	issue string
+	// failDelete makes removing a label fail, as a locked or vanished label
+	// would.
+	failDelete bool
 }
 
 func (s *issuesServer) client(t *testing.T) *githubIssues {
@@ -48,6 +51,11 @@ func (s *issuesServer) client(t *testing.T) *githubIssues {
 		}
 		b, _ := io.ReadAll(r.Body)
 		s.rest = append(s.rest, strings.TrimSpace(r.Method+" "+r.URL.EscapedPath()+" "+string(b)))
+		if r.Method == http.MethodDelete && s.failDelete {
+			w.WriteHeader(http.StatusInternalServerError)
+			io.WriteString(w, `{"message":"Server Error"}`)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		io.WriteString(w, `{}`)
 	})
@@ -290,7 +298,9 @@ func TestGitHubIssuesTransitionsRefusesAPullRequestOrAClosedIssue(t *testing.T) 
 	}
 }
 
-func TestGitHubIssuesUpdateLabelsSetsTheWholeSetInOneRequest(t *testing.T) {
+// Labels are added and removed one by one rather than by replacing the set, so
+// a label someone else added in the meantime is never lost.
+func TestGitHubIssuesUpdateLabelsAddsAndRemovesEachLabel(t *testing.T) {
 	srv := &issuesServer{}
 	tr := srv.client(t)
 
@@ -298,9 +308,29 @@ func TestGitHubIssuesUpdateLabelsSetsTheWholeSetInOneRequest(t *testing.T) {
 	if err := tr.UpdateLabels(context.Background(), "#12", []string{"symphony-ready", "Keep"}, []string{"NEEDS TRIAGE"}); err != nil {
 		t.Fatalf("UpdateLabels() error = %v", err)
 	}
-	want := []string{`PUT /repos/Acme/App/issues/12/labels {"labels":["keep","symphony-ready"]}`}
+	want := []string{
+		`POST /repos/Acme/App/issues/12/labels {"labels":["symphony-ready"]}`,
+		`DELETE /repos/Acme/App/issues/12/labels/needs%20triage`,
+	}
 	if !slices.Equal(srv.rest, want) {
 		t.Errorf("requests = %q, want %q", srv.rest, want)
+	}
+}
+
+// A failure partway leaves the earlier changes applied, so the error says
+// exactly which were.
+func TestGitHubIssuesUpdateLabelsSaysWhatAPartialFailureApplied(t *testing.T) {
+	srv := &issuesServer{failDelete: true}
+	tr := srv.client(t)
+
+	err := tr.UpdateLabels(context.Background(), "#12", []string{"symphony-ready"}, []string{"keep"})
+	if err == nil {
+		t.Fatal("UpdateLabels() reported success though a removal failed")
+	}
+	for _, want := range []string{"#12", `added "symphony-ready"`, `could not remove "keep"`, "500"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not say %q", err, want)
+		}
 	}
 }
 

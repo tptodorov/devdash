@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -309,10 +310,13 @@ func (g *githubIssues) ApplyTransition(ctx context.Context, key string, tr Trans
 	return g.write(ctx, http.MethodPatch, endpoint, map[string]string{"state": "closed", "state_reason": tr.ID})
 }
 
-// UpdateLabels sets the issue's labels to its current ones minus remove plus
-// add, in one request, so the change applies whole or not at all. Names match
-// without regard to case, as GitHub's do: a label already carried in another
-// case is kept as it is. A label the repository lacks is created.
+// UpdateLabels adds and removes labels one at a time, so labels it was not asked
+// about, including any set by someone else meanwhile, are never touched. Names
+// match without regard to case, as GitHub's do: a label the issue already
+// carries in another case is not added again, and one to remove is removed in
+// the case the issue carries it. A label the repository lacks is created. A
+// failure partway leaves the earlier changes applied, and the error says
+// exactly which were.
 func (g *githubIssues) UpdateLabels(ctx context.Context, key string, add, remove []string) error {
 	if len(add) == 0 && len(remove) == 0 {
 		return nil
@@ -322,24 +326,52 @@ func (g *githubIssues) UpdateLabels(ctx context.Context, key string, add, remove
 		return err
 	}
 
-	labels := []string{}
-	for _, l := range current {
-		if !containsFold(remove, l) {
-			labels = append(labels, l)
-		}
-	}
+	var adding []string
 	for _, l := range add {
-		if !containsFold(labels, l) {
-			labels = append(labels, l)
+		if !containsFold(current, l) && !containsFold(adding, l) {
+			adding = append(adding, l)
 		}
 	}
-	if slices.Equal(labels, current) {
-		return nil
+	var removing []string
+	for _, l := range current {
+		if containsFold(remove, l) {
+			removing = append(removing, l)
+		}
 	}
 
-	endpoint, err := g.issueURL(ctx, key, "/labels")
-	if err != nil {
-		return err
+	var done []string
+	fail := func(what string, err error) error {
+		return fmt.Errorf("%s: %s", key, strings.Join(append(done, fmt.Sprintf("could not %s: %v", what, err)), "; "))
 	}
-	return g.write(ctx, http.MethodPut, endpoint, map[string][]string{"labels": labels})
+	if len(adding) > 0 {
+		endpoint, err := g.issueURL(ctx, key, "/labels")
+		if err != nil {
+			return err
+		}
+		if err := g.write(ctx, http.MethodPost, endpoint, map[string][]string{"labels": adding}); err != nil {
+			return fail("add "+quoteAll(adding), err)
+		}
+		done = append(done, "added "+quoteAll(adding))
+	}
+	for _, l := range removing {
+		endpoint, err := g.issueURL(ctx, key, "/labels/"+url.PathEscape(l))
+		if err != nil {
+			return err
+		}
+		// A 404 means the label is already gone, which is what was asked.
+		if err := g.write(ctx, http.MethodDelete, endpoint, nil, http.StatusNotFound); err != nil {
+			return fail(fmt.Sprintf("remove %q", l), err)
+		}
+		done = append(done, fmt.Sprintf("removed %q", l))
+	}
+	return nil
+}
+
+// quoteAll quotes each name and joins them, for messages.
+func quoteAll(names []string) string {
+	q := make([]string, len(names))
+	for i, n := range names {
+		q[i] = strconv.Quote(n)
+	}
+	return strings.Join(q, ", ")
 }

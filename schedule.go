@@ -50,7 +50,14 @@ func scheduled(cfg symphonyConfig, t Ticket) bool {
 			return false
 		}
 	}
-	return containsFold(cfg.Tracker.ActiveStates, t.Status)
+	return labelsOnly(t) || containsFold(cfg.Tracker.ActiveStates, t.Status)
+}
+
+// labelsOnly reports whether Symphony's readiness for the ticket is its labels
+// alone. A GitHub issue has no workflow to move through: it is ready when it is
+// open and labelled, and every issue the dashboard shows is open.
+func labelsOnly(t Ticket) bool {
+	return t.Source == "GitHub"
 }
 
 // symphonyIsWorkingOnIt reports whether Symphony has an agent actually working the
@@ -135,9 +142,11 @@ func containsFold(list []string, want string) bool {
 // planSchedule works out how to make a ticket eligible for Symphony.
 //
 // Symphony's conditions come from the tracker block of WORKFLOW.md: the issue
-// must belong to project_key (a repository's owner/repo for GitHub), carry every required_label, and sit in one of
-// active_states. terminal_states are refused rather than reopened, since
-// restarting finished work is a bigger decision than a keystroke should make.
+// must belong to project_key (a repository's owner/repo for GitHub), carry every
+// required_label, and sit in one of active_states. terminal_states are refused
+// rather than reopened, since restarting finished work is a bigger decision
+// than a keystroke should make. A GitHub issue's status plays no part: only
+// its labels change.
 func planSchedule(cfg symphonyConfig, t Ticket) schedulePlan {
 	plan := schedulePlan{key: t.Key}
 	tracker := cfg.Tracker
@@ -145,6 +154,15 @@ func planSchedule(cfg symphonyConfig, t Ticket) schedulePlan {
 	if plan.refusal = projectRefusal(cfg, t); plan.refusal != "" {
 		return plan
 	}
+	for _, want := range tracker.RequiredLabels {
+		if !containsFold(t.Labels, want) {
+			plan.addLabels = append(plan.addLabels, want)
+		}
+	}
+	if labelsOnly(t) {
+		return plan
+	}
+
 	if containsFold(tracker.TerminalStates, t.Status) {
 		plan.refusal = fmt.Sprintf("%s is %s, which Symphony treats as finished", t.Key, t.Status)
 		return plan
@@ -152,12 +170,6 @@ func planSchedule(cfg symphonyConfig, t Ticket) schedulePlan {
 	if len(tracker.ActiveStates) == 0 {
 		plan.refusal = "WORKFLOW.md lists no active_states for Symphony"
 		return plan
-	}
-
-	for _, want := range tracker.RequiredLabels {
-		if !containsFold(t.Labels, want) {
-			plan.addLabels = append(plan.addLabels, want)
-		}
 	}
 	if !containsFold(tracker.ActiveStates, t.Status) {
 		// The first active state is the queue Symphony draws from; its own

@@ -85,12 +85,11 @@ func (c *linearClient) Transitions(ctx context.Context, key string) ([]Transitio
 }
 
 const linearUpdateMutation = `
-mutation Update($id: String!, $stateId: String, $labelIds: [String!]) {
-  issueUpdate(id: $id, input: { stateId: $stateId, labelIds: $labelIds }) { success }
+mutation Update($id: String!, $stateId: String!) {
+  issueUpdate(id: $id, input: { stateId: $stateId }) { success }
 }`
 
-// update sends an issueUpdate. Only the variables present are set, because a
-// null variable leaves its input field out.
+// update sends an issueUpdate moving an issue to another workflow state.
 func (c *linearClient) update(ctx context.Context, vars map[string]any) error {
 	var res struct {
 		IssueUpdate struct {
@@ -121,9 +120,8 @@ query Labels($id: String!, $names: IssueLabelFilter, $lookup: Boolean!) {
   issueLabels(filter: $names, first: 250) @include(if: $lookup) { nodes { id name team { id } } }
 }`
 
-// UpdateLabels adds and removes labels by name, without regard to case. Linear
-// sets an issue's labels as a whole, so the new set is worked out from the
-// current one and written in one request, which applies whole or not at all.
+// UpdateLabels adds and removes labels by name, without regard to case, one
+// label at a time so that labels it was not asked about are never touched.
 // The labels to add are looked up by name, and each must already exist on the
 // issue's team or workspace-wide; one that does not is an error naming it, and
 // nothing is written.
@@ -164,33 +162,114 @@ func (c *linearClient) UpdateLabels(ctx context.Context, key string, add, remove
 		return err
 	}
 
-	var current []string
+	// Work out the single-label changes: labels the issue carries that are to
+	// go, and labels to add that it does not carry yet, by name and without
+	// regard to case.
+	var ops []linearLabelOp
+	var carried []string
 	for _, l := range res.Issue.Labels.Nodes {
-		current = append(current, l.ID)
-	}
-	ids := []string{}
-	for _, l := range res.Issue.Labels.Nodes {
-		if !containsFold(remove, l.Name) {
-			ids = append(ids, l.ID)
+		carried = append(carried, l.Name)
+		if containsFold(remove, l.Name) {
+			ops = append(ops, linearLabelOp{remove: true, id: l.ID, name: l.Name})
 		}
 	}
 	for _, name := range add {
-		found := ""
-		for _, l := range res.IssueLabels.Nodes {
+		if containsFold(carried, name) {
+			continue
+		}
+		found := -1
+		for i, l := range res.IssueLabels.Nodes {
 			if strings.EqualFold(l.Name, name) && (l.Team == nil || l.Team.ID == res.Issue.Team.ID) {
-				found = l.ID
+				found = i
 				break
 			}
 		}
-		if found == "" {
+		if found < 0 {
 			return fmt.Errorf("label %q does not exist in Linear on %s's team or workspace", name, key)
 		}
-		if !slices.Contains(ids, found) {
-			ids = append(ids, found)
+		l := res.IssueLabels.Nodes[found]
+		if !slices.ContainsFunc(ops, func(op linearLabelOp) bool { return op.id == l.ID }) {
+			ops = append(ops, linearLabelOp{id: l.ID, name: l.Name})
 		}
 	}
-	if slices.Equal(ids, current) {
+	if len(ops) == 0 {
 		return nil
 	}
-	return c.update(ctx, map[string]any{"id": res.Issue.ID, "labelIds": ids})
+	return c.applyLabelOps(ctx, key, res.Issue.ID, ops)
+}
+
+// linearLabelOp adds or removes one label.
+type linearLabelOp struct {
+	remove   bool
+	id, name string
+}
+
+// applyLabelOps sends every label change in one request, each its own
+// issueAddLabel or issueRemoveLabel, so a label someone else set in the
+// meantime is left alone rather than overwritten by a stale full set. Linear
+// runs them one by one, not as a transaction, so when any fails the error says
+// exactly which were applied and which were not.
+func (c *linearClient) applyLabelOps(ctx context.Context, key, issueID string, ops []linearLabelOp) error {
+	var params, fields []string
+	vars := map[string]any{"id": issueID}
+	for i, op := range ops {
+		alias, mutation := fmt.Sprintf("a%d", i), "issueAddLabel"
+		if op.remove {
+			mutation = "issueRemoveLabel"
+		}
+		params = append(params, "$"+alias+": String!")
+		fields = append(fields, fmt.Sprintf("  %s: %s(id: $id, labelId: $%s) { success }", alias, mutation, alias))
+		vars[alias] = op.id
+	}
+	query := fmt.Sprintf("mutation Labels($id: String!, %s) {\n%s\n}", strings.Join(params, ", "), strings.Join(fields, "\n"))
+
+	body, status, err := c.do(ctx, query, vars)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("linear returned %d: %s", status, firstLine(body))
+	}
+	var res struct {
+		Data   map[string]*struct{ Success bool } `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+			Path    []any  `json:"path"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &res); err != nil {
+		return fmt.Errorf("decoding linear response: %w", err)
+	}
+
+	why := map[string]string{} // alias -> failure
+	for _, e := range res.Errors {
+		if len(e.Path) > 0 {
+			if alias, ok := e.Path[0].(string); ok {
+				why[alias] = e.Message
+				continue
+			}
+		}
+		why[""] = e.Message // not tied to one change: none can be trusted
+	}
+	var done, failed []string
+	for i, op := range ops {
+		alias := fmt.Sprintf("a%d", i)
+		verb, past := "add", "added"
+		if op.remove {
+			verb, past = "remove", "removed"
+		}
+		r := res.Data[alias]
+		switch msg, bad := why[alias]; {
+		case bad:
+			failed = append(failed, fmt.Sprintf("could not %s %q: %s", verb, op.name, msg))
+		case r == nil || !r.Success:
+			failed = append(failed, fmt.Sprintf("could not %s %q: %s", verb, op.name, cmp.Or(why[""], "linear did not apply it")))
+		default:
+			done = append(done, fmt.Sprintf("%s %q", past, op.name))
+		}
+	}
+	if len(failed) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s: %s", key, strings.Join(append(done, failed...), "; "))
 }

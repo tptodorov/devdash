@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -467,5 +468,39 @@ func TestGitHubProjectKeyIsTheRepository(t *testing.T) {
 	scheduled.URL = "https://github.com/acme/app/issues/12"
 	if p := planToggle(cfg, scheduled); p.refusal != "" || !p.unschedule {
 		t.Errorf("unschedule in same repo = %+v, want an unschedule plan", p)
+	}
+}
+
+// A GitHub issue is ready for Symphony when it is open and carries the required
+// labels. Its status is never moved: GitHub has no workflow to move it through,
+// and every issue the dashboard shows is open, In Progress included.
+func TestGitHubSchedulingUsesOnlyLabels(t *testing.T) {
+	cfg := testConfig()
+	cfg.Tracker.Kind = "github"
+	cfg.Tracker.Provider.ProjectKey = ""
+	cfg.Tracker.ActiveStates = nil // nothing to name for GitHub
+
+	for _, status := range []string{"Open", "In Progress"} {
+		bare := Ticket{Key: "#3", Source: "GitHub", Status: status}
+		p := planSchedule(cfg, bare)
+		if p.refusal != "" || p.toStatus != "" || !slices.Equal(p.addLabels, []string{"symphony-ready"}) {
+			t.Errorf("%s: plan = %+v, want only the label added", status, p)
+		}
+
+		labelled := bare
+		labelled.Labels = []string{"Symphony-Ready"}
+		if !planSchedule(cfg, labelled).nothingToDo() {
+			t.Errorf("%s: a labelled open issue should already be scheduled", status)
+		}
+		if p := planToggle(cfg, labelled); !p.unschedule || !slices.Equal(p.removeLabels, []string{"symphony-ready"}) {
+			t.Errorf("%s: toggle = %+v, want the label removed", status, p)
+		}
+	}
+
+	// The dashboard marks it queued on the same terms.
+	tickets := []Ticket{{Key: "#3", Source: "GitHub", Status: "Open", Labels: []string{"symphony-ready"}}}
+	applySymphony(tickets, symphonyInfo{haveCfg: true, cfg: cfg})
+	if tickets[0].Symphony != SymphonyScheduled {
+		t.Errorf("Symphony = %q, want scheduled", tickets[0].Symphony)
 	}
 }

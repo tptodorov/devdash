@@ -318,6 +318,8 @@ and the colour says what Symphony is doing with it:
 `linear` or `github`; a ticket from any other tracker is refused with a message).
 A `provider.project_key` limits it to one project: the key prefix (`PROJ`) for
 JIRA and Linear, the repository (`owner/repo`) for GitHub.
+A GitHub issue is ready for Symphony when it is open and carries the required
+labels; `S` only adds or removes those labels and never touches its state.
 On a ticket Symphony would pick up it
 strips the required labels again, which is enough to release the ticket:
 Symphony re-reads the labels before it retries or reconsiders a blocked issue,

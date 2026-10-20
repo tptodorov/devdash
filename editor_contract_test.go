@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -43,6 +44,9 @@ type contractFixture struct {
 	unknown []string // keys naming no ticket: well formed, and another tracker's form
 	query   string   // passed to Tickets: the tracker's default scope
 	writes  func() int
+	// meanwhile has someone else add a label to the ticket right after the
+	// editor next reads it, as a concurrent edit in the tracker would.
+	meanwhile func(label string)
 }
 
 var contractImplementations = []struct {
@@ -142,14 +146,13 @@ func TestEditorContract(t *testing.T) {
 				assertLabels(t, f, []string{"Mixed-Case", "keep"})
 			})
 
-			t.Run("a label update applies whole or not at all", func(t *testing.T) {
+			t.Run("a label someone else adds meanwhile is kept", func(t *testing.T) {
 				f := impl.new(t)
-				// Removing one label and adding another must never leave the
-				// ticket with only half of it.
-				_ = f.ed.UpdateLabels(context.Background(), f.key, []string{"symphony-ready"}, []string{"keep"})
-				if n := f.writes(); n > 1 {
-					t.Errorf("made %d writes for one label update; a failure between them would half-apply it", n)
+				f.meanwhile("theirs")
+				if err := f.ed.UpdateLabels(context.Background(), f.key, []string{"symphony-ready"}, []string{"keep"}); err != nil {
+					t.Fatalf("UpdateLabels: %v", err)
 				}
+				assertLabels(t, f, []string{"Mixed-Case", "symphony-ready", "theirs"})
 			})
 
 			t.Run("removing a label the ticket lacks is not an error", func(t *testing.T) {
@@ -249,10 +252,11 @@ func assertLabels(t *testing.T, f contractFixture, want []string) {
 // default JQL leaves out the Done category, and labels are case-sensitive
 // strings that need no prior definition.
 type jiraFake struct {
-	mu     sync.Mutex
-	status string
-	labels []string
-	writes int
+	mu      sync.Mutex
+	status  string
+	labels  []string
+	writes  int
+	pending string // added by someone else right after the next read
 }
 
 var jiraFakeStatuses = []struct{ id, name, category string }{
@@ -333,6 +337,9 @@ func newJIRAContractFixture(t *testing.T) contractFixture {
 		defer f.mu.Unlock()
 		labels, _ := json.Marshal(f.labels)
 		fmt.Fprintf(w, `{"key":"ENG-1","fields":{"labels":%s}}`, labels)
+		if f.pending != "" {
+			f.labels, f.pending = append(f.labels, f.pending), ""
+		}
 	})
 	mux.HandleFunc("PUT /rest/api/3/issue/{key}", func(w http.ResponseWriter, r *http.Request) {
 		if !issue(w, r) {
@@ -360,11 +367,12 @@ func newJIRAContractFixture(t *testing.T) contractFixture {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return contractFixture{
-		ed:      &jiraClient{baseURL: srv.URL, user: "u", token: "t", http: srv.Client()},
-		key:     "ENG-1",
-		unknown: []string{"ENG-404", "#1"},
-		query:   DefaultJQL,
-		writes:  func() int { f.mu.Lock(); defer f.mu.Unlock(); return f.writes },
+		ed:        &jiraClient{baseURL: srv.URL, user: "u", token: "t", http: srv.Client()},
+		key:       "ENG-1",
+		unknown:   []string{"ENG-404", "#1"},
+		query:     DefaultJQL,
+		writes:    func() int { f.mu.Lock(); defer f.mu.Unlock(); return f.writes },
+		meanwhile: func(l string) { f.mu.Lock(); defer f.mu.Unlock(); f.pending = l },
 	}
 }
 
@@ -378,13 +386,17 @@ type linearFake struct {
 	stateID string
 	labels  []string // label ids
 	writes  int
+	pending string // label id added by someone else right after the next read
 }
+
+// linearFakeLabelOpRE reads one aliased label mutation out of a request.
+var linearFakeLabelOpRE = regexp.MustCompile(`(\w+): issue(Add|Remove)Label\(id: \$id, labelId: \$(\w+)\)`)
 
 var (
 	linearFakeStates = []struct{ id, name, typ string }{
 		{"s-todo", "Todo", "unstarted"}, {"s-prog", "In Progress", "started"}, {"s-done", "Done", "completed"},
 	}
-	linearFakeLabels = map[string]string{"l-keep": "keep", "l-mixed": "Mixed-Case", "l-ready": "symphony-ready"}
+	linearFakeLabels = map[string]string{"l-keep": "keep", "l-mixed": "Mixed-Case", "l-ready": "symphony-ready", "l-theirs": "theirs"}
 )
 
 func newLinearContractFixture(t *testing.T) contractFixture {
@@ -432,14 +444,29 @@ func newLinearContractFixture(t *testing.T) contractFixture {
 				}
 				f.stateID = s
 			}
-			if ids, ok := req.Variables["labelIds"].([]any); ok {
-				f.labels = nil
-				for _, x := range ids {
-					f.labels = append(f.labels, x.(string))
-				}
-			}
 			f.writes++
 			io.WriteString(w, `{"data":{"issueUpdate":{"success":true}}}`)
+		case strings.Contains(req.Query, "issueAddLabel") || strings.Contains(req.Query, "issueRemoveLabel"):
+			var data, errs []string
+			for _, m := range linearFakeLabelOpRE.FindAllStringSubmatch(req.Query, -1) {
+				alias, op, label := m[1], m[2], req.Variables[m[3]].(string)
+				if _, ok := linearFakeLabels[label]; !ok {
+					data = append(data, fmt.Sprintf(`%q:null`, alias))
+					errs = append(errs, fmt.Sprintf(`{"message":"Entity not found: IssueLabel","path":[%q]}`, alias))
+					continue
+				}
+				f.labels = slices.DeleteFunc(f.labels, func(x string) bool { return x == label })
+				if op == "Add" {
+					f.labels = append(f.labels, label)
+				}
+				data = append(data, fmt.Sprintf(`%q:{"success":true}`, alias))
+			}
+			f.writes++
+			resp := `{"data":{` + strings.Join(data, ",") + `}`
+			if len(errs) > 0 {
+				resp += `,"errors":[` + strings.Join(errs, ",") + `]`
+			}
+			io.WriteString(w, resp+"}")
 		case strings.Contains(req.Query, "issueLabels"):
 			var all []string
 			for id, name := range linearFakeLabels {
@@ -447,6 +474,9 @@ func newLinearContractFixture(t *testing.T) contractFixture {
 			}
 			fmt.Fprintf(w, `{"data":{"issue":{"id":"uuid-1","team":{"id":"team-1"},"labels":{"nodes":%s}},"issueLabels":{"nodes":[%s]}}}`,
 				labelNodes(f.labels), strings.Join(all, ","))
+			if f.pending != "" {
+				f.labels, f.pending = append(f.labels, f.pending), ""
+			}
 		case strings.Contains(req.Query, "states"):
 			var states []string
 			for i, s := range linearFakeStates {
@@ -465,6 +495,15 @@ func newLinearContractFixture(t *testing.T) contractFixture {
 		unknown: []string{"ENG-404", "#1"},
 		query:   "",
 		writes:  func() int { f.mu.Lock(); defer f.mu.Unlock(); return f.writes },
+		meanwhile: func(l string) {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			for id, name := range linearFakeLabels {
+				if name == l {
+					f.pending = id
+				}
+			}
+		},
 	}
 }
 
@@ -475,10 +514,11 @@ func newLinearContractFixture(t *testing.T) contractFixture {
 // names match without regard to case, and removing a label the issue lacks
 // answers 404.
 type githubFake struct {
-	mu     sync.Mutex
-	open   bool
-	labels []string
-	writes int
+	mu      sync.Mutex
+	open    bool
+	labels  []string
+	writes  int
+	pending string // added by someone else right after the next read
 }
 
 func newGitHubContractFixture(t *testing.T) contractFixture {
@@ -524,6 +564,9 @@ func newGitHubContractFixture(t *testing.T) contractFixture {
 			labels = append(labels, fmt.Sprintf(`{"name":%q}`, l))
 		}
 		fmt.Fprintf(w, `{"number":1,"state":%q,"labels":[%s]}`, state, strings.Join(labels, ","))
+		if f.pending != "" {
+			f.labels, f.pending = append(f.labels, f.pending), ""
+		}
 	})
 	mux.HandleFunc("PUT /repos/acme/app/issues/{n}/labels", func(w http.ResponseWriter, r *http.Request) {
 		if !issue(w, r) {
@@ -590,10 +633,11 @@ func newGitHubContractFixture(t *testing.T) contractFixture {
 	t.Cleanup(srv.Close)
 	gh := &githubClient{token: "t", http: srv.Client(), api: srv.URL}
 	return contractFixture{
-		ed:      newGitHubIssues(gh, "acme", "app"),
-		key:     "#1",
-		unknown: []string{"#" + strconv.Itoa(404), "ENG-1"},
-		query:   "",
-		writes:  func() int { f.mu.Lock(); defer f.mu.Unlock(); return f.writes },
+		ed:        newGitHubIssues(gh, "acme", "app"),
+		key:       "#1",
+		unknown:   []string{"#" + strconv.Itoa(404), "ENG-1"},
+		query:     "",
+		writes:    func() int { f.mu.Lock(); defer f.mu.Unlock(); return f.writes },
+		meanwhile: func(l string) { f.mu.Lock(); defer f.mu.Unlock(); f.pending = l },
 	}
 }
