@@ -1,6 +1,6 @@
 # devdash
 
-Your assigned JIRA and Linear tickets and the pull requests addressing them, on
+Your assigned JIRA, Linear or GitHub tickets and the pull requests addressing them, on
 one page, in your terminal.
 
 [![CI](https://github.com/tptodorov/devdash/actions/workflows/ci.yml/badge.svg)](https://github.com/tptodorov/devdash/actions/workflows/ci.yml)
@@ -43,8 +43,8 @@ devdash puts them on one line each. It also closes three gaps that cost real tim
 - **Approvals can be invisible.** GitHub reports no review decision when the base
   branch requires none, so an approved PR looks unreviewed. devdash counts
   approving reviews as well as reading the decision.
-- **Changing a ticket's status meant leaving the terminal.** Press `s` (JIRA
-  tickets; Linear is read-only for now).
+- **Changing a ticket's status meant leaving the terminal.** Press `s`
+  (JIRA, Linear or GitHub tickets).
 
 ## Requirements
 
@@ -53,7 +53,9 @@ devdash puts them on one line each. It also closes three gaps that cost real tim
   have credentials set are shown together. Create a JIRA token at
   [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens),
   a Linear key under linear.app > Settings > Security & access
-- **A GitHub token** with `repo` scope
+- **A GitHub token** with `repo` scope. With no JIRA or Linear credentials,
+  devdash uses the open GitHub issues assigned to you in the repository you run
+  it from, so no tracker setup is needed at all
 
 Every glyph devdash draws is plain Unicode, one column wide, so no special font
 is needed.
@@ -253,9 +255,10 @@ Tickets are grouped by status, most urgent first, and each group is coloured.
 
 ## Changing a ticket's status
 
-Press `s` on a JIRA ticket (Linear tickets are read-only for now). The choices
-come from JIRA's transitions API for that specific issue, so they are exactly
-what your workflow permits from its current state.
+Press `s` on a ticket. The choices come from its own tracker: JIRA's transitions
+for that specific issue, so exactly what your workflow permits from its current
+state; the other workflow states of its team in Linear; and closing it (as
+completed or as not planned) for a GitHub issue.
 
 ```
 ╭─ PROJ-482 ────────────────────────────────────────────╮
@@ -311,8 +314,13 @@ and the colour says what Symphony is doing with it:
 | `♪` yellow | waiting for the next retry window |
 | `♪` red | paused waiting for operator input or approval |
 
-`S` toggles, on a JIRA ticket (Linear has no Symphony equivalent, and pressing
-`S` on a Linear ticket flashes as much). On a ticket Symphony would pick up it
+`S` toggles a ticket from the tracker WORKFLOW.md names in `tracker.kind` (`jira`,
+`linear` or `github`; a ticket from any other tracker is refused with a message).
+A `provider.project_key` limits it to one project: the key prefix (`PROJ`) for
+JIRA and Linear, the repository (`owner/repo`) for GitHub.
+A GitHub issue is ready for Symphony when it is open and carries the required
+labels; `S` only adds or removes those labels and never touches its state.
+On a ticket Symphony would pick up it
 strips the required labels again, which is enough to release the ticket:
 Symphony re-reads the labels before it retries or reconsiders a blocked issue,
 so stuck work can be taken back, fixed, and scheduled afresh. Only a ticket an
@@ -344,6 +352,7 @@ nothing is reported — that is the ordinary case.
 | `-all-repos` | show pull requests from every repository, not just this directory's | — | scoped to this repo |
 | `-jql` | JQL selecting which JIRA tickets to show | `DEVDASH_JQL` | assigned to you, not Done |
 | `-linear-query` | Linear `IssueFilter` (JSON) selecting which Linear tickets to show | `DEVDASH_LINEAR_QUERY` | assigned to you, not done |
+| `-github-query` | search qualifiers selecting which of this repository's open issues to show when GitHub is the tracker; empty shows all | `DEVDASH_GITHUB_QUERY` | `assignee:@me` |
 | `-pr-query` | GitHub search selecting which pull requests to show; overrides repo scoping | `DEVDASH_PR_QUERY` | open and recently merged, scoped to this repo |
 | `-include-archived` | keep pull requests whose repository is archived | — | archived hidden |
 | `-no-links` | render plain text instead of OSC 8 terminal hyperlinks | — | hyperlinks on |
@@ -360,6 +369,7 @@ Scope it to a project or an organisation by overriding the queries:
 ```bash
 devdash -jql 'assignee = currentUser() AND project = PROJ AND statusCategory != Done ORDER BY updated DESC'
 devdash -linear-query '{"team":{"key":{"eq":"ENG"}},"state":{"type":{"nin":["completed","canceled"]}}}'
+devdash -github-query 'assignee:@me label:bug'
 devdash -pr-query 'author:@me is:pr is:open org:your-org'
 ```
 
@@ -369,8 +379,10 @@ no state filtering — ask for closed PRs and you get them.
 ## How it works
 
 **Correlation.** A pull request attaches to a ticket when its key (JIRA's or
-Linear's — both look like `PROJ-123`) appears in its **title**, falling back to
-its **branch name**. PRs matching no active ticket are
+Linear's — both look like `PROJ-123`, a GitHub issue's is `#123`) appears in its
+**title**, falling back to its **branch name**. A GitHub issue also
+matches the pull requests GitHub says close it, and is In Progress while one is
+open. PRs matching no active ticket are
 listed under their own heading rather than hidden, because they still need
 something from you.
 
@@ -391,7 +403,8 @@ but they cannot be merged. `-include-archived` brings them back.
 called over HTTPS. `pbcopy`/`xclip` and `open`/`xdg-open` are used only for the
 clipboard and the browser, and only when you press `c` or `enter`.
 
-Nothing is written anywhere except the clipboard, and JIRA when you press `s`.
+Nothing is written anywhere except the clipboard, and your tracker when you press
+`s` or `S`.
 
 ## Troubleshooting
 

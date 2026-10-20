@@ -59,29 +59,18 @@ func waitForOutput(t *testing.T, out *syncBuf, substr string, timeout time.Durat
 	t.Fatalf("timed out after %s waiting for rendered output to contain %q; last frame:\n%s", timeout, substr, out.String())
 }
 
-// waitForNewOutput is like waitForOutput but only looks at bytes rendered
-// after since, so a stale match from an earlier assertion in the same test
-// (e.g. a flash message still sitting in the accumulated buffer) cannot make
-// a later, unrelated check pass vacuously.
-func waitForNewOutput(t *testing.T, out *syncBuf, since int, substr string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if full := out.String(); len(full) >= since && strings.Contains(full[since:], substr) {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("timed out after %s waiting for new rendered output to contain %q; output since marker:\n%s", timeout, substr, out.String()[min(since, out.Len()):])
-}
-
 // newJIRAFixture serves the two JIRA endpoints fetchTickets needs: the ticket
 // search and the child-count search. It reports category/status from the
 // atomic swapped so a test can trigger a reordering refresh.
-func newJIRAFixture(t *testing.T, hits chan<- struct{}, swapped *atomic.Bool) *httptest.Server {
+func newJIRAFixture(t *testing.T, hits chan<- struct{}, swapped *atomic.Bool, transitions *atomic.Int32) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/transitions") {
+			transitions.Add(1)
+			fmt.Fprint(w, `{"transitions":[]}`)
+			return
+		}
 		jql := r.URL.Query().Get("jql")
 		if strings.Contains(jql, "parent in") {
 			fmt.Fprint(w, `{"issues":[]}`)
@@ -104,10 +93,15 @@ func newJIRAFixture(t *testing.T, hits chan<- struct{}, swapped *atomic.Bool) *h
 // newLinearFixture serves the Linear GraphQL endpoint, reporting the opposite
 // category/status from the JIRA fixture so exactly one ENG-1 row sits in each
 // column, with source swapped alongside the JIRA fixture.
-func newLinearFixture(t *testing.T, swapped *atomic.Bool) *httptest.Server {
+func newLinearFixture(t *testing.T, swapped *atomic.Bool, states *atomic.Int32) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if body, _ := io.ReadAll(r.Body); strings.Contains(string(body), "States") {
+			states.Add(1)
+			fmt.Fprint(w, `{"data":{"issue":{"id":"u","state":{"id":"s1"},"team":{"states":{"nodes":[]}}}}}`)
+			return
+		}
 		name, stateType := "To Do", "unstarted"
 		if swapped.Load() {
 			name, stateType = "In Progress", "started"
@@ -175,17 +169,30 @@ func newCollisionApp(t *testing.T, jiraURL, linearURL string) *app {
 	return a
 }
 
-// TestLiveOpenPickerAndScheduleRefuseATrackerKeyCollision drives the real
-// binary's event loop end to end: it fetches a JIRA ENG-1 (In Progress) and a
-// Linear ENG-1 (To Do) from local fixture servers, moves the cursor onto the
-// Linear row (which sorts after the JIRA row), and confirms both JIRA-only
-// actions ('s' status-change, 'S' Symphony schedule) refuse it live instead
-// of silently resolving the JIRA ticket that shares its key.
-func TestLiveOpenPickerAndScheduleRefuseATrackerKeyCollision(t *testing.T) {
+// waitForCount polls until n reaches want, or fails.
+func waitForCount(t *testing.T, n *atomic.Int32, want int32, what string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if n.Load() >= want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s (got %d, want %d)", what, n.Load(), want)
+}
+
+// TestLiveOpenPickerAsksTheCursorsOwnTrackerAcrossAKeyCollision drives the real
+// event loop end to end: it fetches a JIRA ENG-1 (In Progress) and a Linear
+// ENG-1 (To Do) from local fixture servers, moves the cursor onto the Linear
+// row (which sorts after the JIRA row), and confirms 's' asks Linear for the
+// moves, not the JIRA ticket that shares its key.
+func TestLiveOpenPickerAsksTheCursorsOwnTrackerAcrossAKeyCollision(t *testing.T) {
 	var swapped atomic.Bool // JIRA starts "In Progress" (sorts first), Linear "To Do"
+	var jiraMoves, linearMoves atomic.Int32
 	hits := make(chan struct{}, 8)
-	jiraSrv := newJIRAFixture(t, hits, &swapped)
-	linearSrv := newLinearFixture(t, &swapped)
+	jiraSrv := newJIRAFixture(t, hits, &swapped, &jiraMoves)
+	linearSrv := newLinearFixture(t, &swapped, &linearMoves)
 
 	a := newCollisionApp(t, jiraSrv.URL, linearSrv.URL)
 	h := startLiveApp(t, a)
@@ -196,41 +203,34 @@ func TestLiveOpenPickerAndScheduleRefuseATrackerKeyCollision(t *testing.T) {
 	// JIRA's "In Progress" row sorts before Linear's "To Do" row, so one down
 	// move lands the cursor on the colliding Linear row.
 	h.send("j")
-
-	mark := h.out.Len()
 	h.send("s")
-	waitForNewOutput(t, h.out, mark, "only supported for JIRA tickets", 5*time.Second)
-	if strings.Contains(h.out.String()[mark:], "Loading transitions") {
-		t.Error("openPicker opened a JIRA picker for the Linear row instead of refusing it")
-	}
 
-	mark = h.out.Len()
-	h.send("S")
-	waitForNewOutput(t, h.out, mark, "only supported for JIRA tickets", 5*time.Second)
+	waitForCount(t, &linearMoves, 1, "Linear to be asked for transitions")
+	if n := jiraMoves.Load(); n != 0 {
+		t.Errorf("JIRA was asked for transitions %d times for the Linear row", n)
+	}
 }
 
 // TestLiveCursorStaysOnItsOwnTrackersTicketAcrossAReorderingRefresh
-// reproduces the cursor-restore collision a prior review round on this same
-// change caught: the cursor starts on the Linear ENG-1 row (its group sorts
-// first), then a refresh reorders the groups so the JIRA ENG-1 row sorts
-// first instead. settle()'s id-based cursor restore must follow the Linear
-// ticket, not silently land on the JIRA ticket that now shares its old
-// position. The JIRA-only guard is used as the live, observable proxy for
-// "which tracker is the cursor actually on": if it fires after the refresh,
-// the cursor is still on the Linear row.
+// reproduces the cursor-restore collision a prior review round caught: the
+// cursor starts on the Linear ENG-1 row (its group sorts first), then a
+// refresh reorders the groups so the JIRA ENG-1 row sorts first. settle()'s
+// id-based cursor restore must follow the Linear ticket, not land on the JIRA
+// ticket that now shares its old position. Which tracker 's' asks afterwards
+// is the live, observable proxy for which row the cursor is on.
 func TestLiveCursorStaysOnItsOwnTrackersTicketAcrossAReorderingRefresh(t *testing.T) {
 	hits := make(chan struct{}, 8)
+	var jiraMoves, linearMoves atomic.Int32
 
 	// JIRA needs to start "To Do" while Linear starts "In Progress" — the
-	// reverse of the other test — so each fixture gets its own swap flag
-	// instead of sharing one.
+	// reverse of the other test — so each fixture gets its own swap flag.
 	jiraSwapped := &atomic.Bool{}
 	jiraSwapped.Store(true) // swapped=true -> JIRA "To Do" initially
 	linearSwapped := &atomic.Bool{}
 	linearSwapped.Store(true) // swapped=true -> Linear "In Progress" initially
 
-	jiraSrv := newJIRAFixture(t, hits, jiraSwapped)
-	linearSrv := newLinearFixture(t, linearSwapped)
+	jiraSrv := newJIRAFixture(t, hits, jiraSwapped, &jiraMoves)
+	linearSrv := newLinearFixture(t, linearSwapped, &linearMoves)
 
 	a := newCollisionApp(t, jiraSrv.URL, linearSrv.URL)
 	h := startLiveApp(t, a)
@@ -239,16 +239,20 @@ func TestLiveCursorStaysOnItsOwnTrackersTicketAcrossAReorderingRefresh(t *testin
 	waitForOutput(t, h.out, "linear ticket", 5*time.Second)
 	<-hits // drain the initial fetch signal
 
-	// Cursor defaults to row 0, which is the Linear "In Progress" row.
-	// Confirm that directly: the JIRA-only guard must refuse it now, before
-	// any refresh is involved.
-	mark := h.out.Len()
+	// Cursor defaults to row 0, the Linear "In Progress" row: 's' asks Linear.
 	h.send("s")
-	waitForNewOutput(t, h.out, mark, "only supported for JIRA tickets", 5*time.Second)
+	waitForCount(t, &linearMoves, 1, "Linear to be asked before the refresh")
+	// The fixture offers no moves, so the picker shows an error: the first
+	// escape dismisses it and the second closes the picker.
+	time.Sleep(150 * time.Millisecond)
+	h.send("\x1b")
+	time.Sleep(150 * time.Millisecond)
+	h.send("\x1b")
+	time.Sleep(150 * time.Millisecond)
 
 	// Flip both fixtures so JIRA now reports "In Progress" (sorts first) and
-	// Linear reports "To Do" — the exact reorder settle()'s cursor-restore
-	// exists to survive.
+	// Linear reports "To Do" — the reorder settle()'s cursor-restore exists to
+	// survive.
 	jiraSwapped.Store(false)
 	linearSwapped.Store(false)
 	h.send("r")
@@ -258,20 +262,15 @@ func TestLiveCursorStaysOnItsOwnTrackersTicketAcrossAReorderingRefresh(t *testin
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for the refresh to hit the JIRA fixture")
 	}
-	// settle() runs synchronously inside Update() on ticketsMsg; give the
-	// Program's own goroutine a moment to process the message it just sent
-	// itself before driving the next key.
+	// settle() runs inside Update() on ticketsMsg; let the Program process the
+	// message it sent itself before driving the next key.
 	time.Sleep(150 * time.Millisecond)
 
-	// If the cursor incorrectly followed the id collision onto the JIRA row,
-	// this guard would not fire (a real transitions fetch would start against
-	// the JIRA fixture instead), and this check — scoped to only the output
-	// rendered after the refresh — would time out. This uses 'S' rather than
-	// the 's' already checked above: bubbletea only writes bytes for what
-	// actually changed on screen, and a second identical flash message would
-	// render byte-for-byte the same as the first, making a same-key repeat
-	// produce no new output to observe even when the guard fires correctly.
-	mark = h.out.Len()
-	h.send("S")
-	waitForNewOutput(t, h.out, mark, "only supported for JIRA tickets", 5*time.Second)
+	// If the cursor wrongly followed the id collision onto the JIRA row, this
+	// would ask JIRA instead.
+	h.send("s")
+	waitForCount(t, &linearMoves, 2, "Linear to be asked after the refresh")
+	if n := jiraMoves.Load(); n != 0 {
+		t.Errorf("JIRA was asked for transitions %d times; the cursor moved off the Linear ticket", n)
+	}
 }

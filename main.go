@@ -1,4 +1,4 @@
-// Command devdash shows the JIRA and Linear tickets assigned to you alongside
+// Command devdash shows the JIRA, Linear or GitHub tickets assigned to you alongside
 // the pull requests that address them, correlated on one page.
 package main
 
@@ -31,6 +31,8 @@ func main() {
 		"JQL query selecting the tickets to show")
 	linearQuery := flag.String("linear-query", os.Getenv("DEVDASH_LINEAR_QUERY"),
 		"Linear issue filter (JSON) selecting the tickets to show; empty uses the default \"not done\" filter")
+	githubQuery := flag.String("github-query", envOrSet("DEVDASH_GITHUB_QUERY", defaultIssuesQuery),
+		"GitHub search qualifiers selecting which of this repository's open issues to show when GitHub is the tracker; empty shows all")
 	prQuery := flag.String("pr-query", os.Getenv("DEVDASH_PR_QUERY"),
 		"GitHub search query selecting the pull requests to show; overrides repo scoping")
 	allRepos := flag.Bool("all-repos", false,
@@ -65,6 +67,7 @@ func main() {
 		interval = minRefresh
 	}
 	a := newApp(*jql, *linearQuery, "", interval, !*noLinks, *includeArchived)
+	a.setGitHubQuery(*githubQuery)
 
 	if *demo {
 		a.loadDemo()
@@ -103,6 +106,15 @@ func main() {
 
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// envOrSet is envOr for a setting where an empty value is meaningful: only an
+// unset variable falls back.
+func envOrSet(key, fallback string) string {
+	if v, ok := os.LookupEnv(key); ok {
 		return v
 	}
 	return fallback

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -80,8 +81,7 @@ type app struct {
 	jira *jiraClient
 	// trackers holds every tracker with credentials configured, each paired
 	// with the query that selects its tickets. jira is also kept on its own
-	// because its write actions (status change, Symphony scheduling) have no
-	// equivalent on other trackers.
+	// because child counts are a JIRA-only enrichment.
 	trackers    []trackerSource
 	gh          *githubClient
 	ghCfg       error // deferred configuration error, surfaced in the UI
@@ -206,17 +206,48 @@ func newApp(jql, linearQuery, ghQuery string, period time.Duration, hyperlinks, 
 		a.trackers = append(a.trackers, trackerSource{client, linearQuery})
 	}
 
-	if len(a.trackers) == 0 && a.trackerErr == nil {
-		a.trackerErr = fmt.Errorf("no ticket tracker configured — set JIRA_URL, JIRA_USERNAME and JIRA_API_TOKEN, or LINEAR_API_KEY")
-	}
-	a.trackerCfgErr = a.trackerErr
-
 	if client, err := newGitHubClient(&http.Client{Timeout: 25 * time.Second}); err != nil {
 		a.ghCfg, a.ghErr = err, err
 	} else {
 		a.gh = client
 	}
+
+	// GitHub issues are the fallback tracker: a repository is assumed to use
+	// one ticketing system, so they are used only when nothing else is, and a
+	// partly set JIRA_* group still counts as "something else".
+	if len(a.trackers) == 0 && a.trackerErr == nil {
+		a.trackerErr = a.useGitHubIssues()
+	}
+	a.trackerCfgErr = a.trackerErr
 	return a
+}
+
+// useGitHubIssues adds the current repository's GitHub issues as the tracker,
+// or says why it cannot.
+func (a *app) useGitHubIssues() error {
+	const none = "no ticket tracker configured — set JIRA_URL, JIRA_USERNAME and JIRA_API_TOKEN, or LINEAR_API_KEY, "
+	if a.gh == nil {
+		return errors.New(none + "or set GITHUB_TOKEN to use this repository's GitHub issues")
+	}
+	cwd, err := os.Getwd()
+	if err == nil {
+		var owner, name string
+		if owner, name, err = localRepo(cwd); err == nil {
+			a.trackers = append(a.trackers, trackerSource{newGitHubIssues(a.gh, owner, name), defaultIssuesQuery})
+			return nil
+		}
+	}
+	return fmt.Errorf("%sor run inside a GitHub repository to use its issues (%w)", none, err)
+}
+
+// setGitHubQuery replaces the search qualifiers the GitHub issues tracker
+// adds to its repository scope. An empty query is meaningful: every open issue.
+func (a *app) setGitHubQuery(q string) {
+	for i, src := range a.trackers {
+		if _, ok := src.tracker.(*githubIssues); ok {
+			a.trackers[i].query = q
+		}
+	}
 }
 
 // jiraConfigured reports whether any JIRA environment variable is set, to
@@ -349,7 +380,7 @@ func fetchTickets(ctx context.Context, trackers []trackerSource, jira *jiraClien
 	// Symphony is rediscovered and queried on every refresh.
 	cwd, _ := os.Getwd()
 	info := symphonyLookup(ctx, cwd)
-	applySymphony(tickets, info, jira.Name())
+	applySymphony(tickets, info)
 	return ticketsMsg{tickets: tickets, warn: warn, symphonyURL: info.endpoint}
 }
 
@@ -537,6 +568,26 @@ func (a *app) openColumn() {
 	_ = openURL(stop.url)
 }
 
+// editorFor finds the tracker called source, if it accepts write actions.
+func (a *app) editorFor(source string) (Editor, bool) {
+	for _, src := range a.trackers {
+		if src.tracker.Name() == source {
+			ed, ok := src.tracker.(Editor)
+			return ed, ok
+		}
+	}
+	return nil, false
+}
+
+// childrenURL is where a ticket's child count leads: a GitHub issue shows its
+// sub-issues on its own page, other trackers need a search for them.
+func childrenURL(t Ticket) string {
+	if t.Source == "GitHub" {
+		return t.URL
+	}
+	return childrenSearchURL(t.URL, t.Key)
+}
+
 // childrenSearchURL turns a ticket's browse URL into a JIRA search for the
 // issues that call it their parent.
 func childrenSearchURL(browseURL, key string) string {
@@ -558,19 +609,15 @@ func (a *app) scheduleForSymphony() tea.Cmd {
 		a.setFlash("that row is a pull request with no ticket — nothing to schedule")
 		return nil
 	}
-	if a.jira == nil {
-		a.setFlash("JIRA is not configured; cannot schedule")
-		return nil
-	}
-	if row.source != a.jira.Name() {
-		a.setFlash("Symphony scheduling is only supported for JIRA tickets")
+	editor, ok := a.editorFor(row.source)
+	if !ok {
+		a.setFlash(row.source + " is not configured; cannot schedule")
 		return nil
 	}
 
-	// Resolved by the row's own source, not just a.jira.Name(): a key is only
-	// guaranteed unique within its own tracker, so another tracker's ticket
-	// sharing this key must never be picked up here instead of the one the
-	// cursor is actually on.
+	// Resolved by the row's own source: a key is only guaranteed unique within
+	// its own tracker, so another tracker's ticket sharing this key must never
+	// be picked up here instead of the one the cursor is actually on.
 	ticket, found := a.ticketByKey(row.ticketKey, row.source)
 	if !found {
 		return nil
@@ -580,6 +627,11 @@ func (a *app) scheduleForSymphony() tea.Cmd {
 	cfg, err := readSymphonyConfig(cwd)
 	if err != nil {
 		a.setFlash("no Symphony configuration here: " + err.Error())
+		return nil
+	}
+
+	if !cfg.watches(row.source) {
+		a.setFlash(fmt.Sprintf("Symphony here watches %s tickets, not %s", cfg.Tracker.Kind, row.source))
 		return nil
 	}
 
@@ -593,11 +645,10 @@ func (a *app) scheduleForSymphony() tea.Cmd {
 		return nil
 	}
 
-	jira := a.jira
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
-		if err := applySchedule(ctx, jira, plan); err != nil {
+		if err := applySchedule(ctx, editor, plan); err != nil {
 			return scheduledMsg{key: plan.key, err: err}
 		}
 		return scheduledMsg{
@@ -654,16 +705,14 @@ func (a *app) openPicker() tea.Cmd {
 		a.setFlash("that row is a pull request with no ticket — nothing to move")
 		return nil
 	}
-	if a.jira == nil {
-		a.setFlash("JIRA is not configured; cannot change status")
-		return nil
-	}
-	if row.source != a.jira.Name() {
-		a.setFlash("changing status is only supported for JIRA tickets")
+	editor, ok := a.editorFor(row.source)
+	if !ok {
+		a.setFlash(row.source + " is not configured; cannot change status")
 		return nil
 	}
 
 	a.picker = &picker{
+		source:    row.source,
 		key:       row.ticketKey,
 		summary:   row.summary,
 		current:   row.status,
@@ -671,11 +720,11 @@ func (a *app) openPicker() tea.Cmd {
 		stage:     stageLoading,
 	}
 
-	jira, key := a.jira, row.ticketKey
+	key := row.ticketKey
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
-		items, err := jira.Transitions(ctx, key)
+		items, err := editor.Transitions(ctx, key)
 		return transitionsMsg{key: key, items: items, err: err}
 	}
 }
@@ -749,15 +798,15 @@ func (a *app) applyTransition() tea.Cmd {
 	p.stage = stageApplying
 	p.err = nil
 
-	jira := a.jira
-	key, id, to := p.key, p.chosen.ID, p.chosen.To
-	fields := p.values
+	editor, _ := a.editorFor(p.source)
+	key, chosen := p.key, p.chosen
+	chosen.Values = p.values
 
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
-		err := jira.ApplyTransition(ctx, key, id, fields)
-		return transitionAppliedMsg{key: key, to: to, err: err}
+		err := editor.ApplyTransition(ctx, key, chosen)
+		return transitionAppliedMsg{key: key, to: chosen.To, err: err}
 	}
 }
 
@@ -856,7 +905,7 @@ func (a *app) settle() {
 			if t.ChildCount > 0 {
 				s.stops = append(s.stops, rowStop{
 					kind: stopRelation,
-					url:  childrenSearchURL(t.URL, t.Key),
+					url:  childrenURL(t),
 					what: fmt.Sprintf("%d sub-tickets of %s", t.ChildCount, t.Key),
 				})
 			}

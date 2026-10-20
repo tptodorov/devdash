@@ -50,7 +50,14 @@ func scheduled(cfg symphonyConfig, t Ticket) bool {
 			return false
 		}
 	}
-	return containsFold(cfg.Tracker.ActiveStates, t.Status)
+	return labelsOnly(t) || containsFold(cfg.Tracker.ActiveStates, t.Status)
+}
+
+// labelsOnly reports whether Symphony's readiness for the ticket is its labels
+// alone. A GitHub issue has no workflow to move through: it is ready when it is
+// open and labelled, and every issue the dashboard shows is open.
+func labelsOnly(t Ticket) bool {
+	return t.Source == "GitHub"
 }
 
 // symphonyIsWorkingOnIt reports whether Symphony has an agent actually working the
@@ -84,12 +91,8 @@ func planToggle(cfg symphonyConfig, t Ticket) schedulePlan {
 	}
 
 	plan := schedulePlan{key: t.Key, unschedule: true}
-	if project := cfg.Tracker.Provider.ProjectKey; project != "" {
-		prefix, _, _ := strings.Cut(t.Key, "-")
-		if !strings.EqualFold(prefix, project) {
-			plan.refusal = fmt.Sprintf("Symphony only watches project %s", project)
-			return plan
-		}
+	if plan.refusal = projectRefusal(cfg, t); plan.refusal != "" {
+		return plan
 	}
 	if symphonyIsWorkingOnIt(t) {
 		plan.refusal = fmt.Sprintf("an agent is running %s; stop the session first", t.Key)
@@ -101,6 +104,30 @@ func planToggle(cfg symphonyConfig, t Ticket) schedulePlan {
 		}
 	}
 	return plan
+}
+
+// ticketProject is what WORKFLOW.md's project_key is compared with: the
+// owner/repo of a GitHub issue, or the key's prefix (PROJ in PROJ-12) for
+// JIRA and Linear.
+func ticketProject(t Ticket) string {
+	if t.Source == "GitHub" {
+		path, _ := strings.CutPrefix(t.URL, "https://github.com/")
+		owner, rest, _ := strings.Cut(path, "/")
+		repo, _, _ := strings.Cut(rest, "/")
+		return owner + "/" + repo
+	}
+	prefix, _, _ := strings.Cut(t.Key, "-")
+	return prefix
+}
+
+// projectRefusal explains why Symphony would not touch a ticket outside the
+// project WORKFLOW.md names, or is empty when it is inside or none is named.
+func projectRefusal(cfg symphonyConfig, t Ticket) string {
+	project := cfg.Tracker.Provider.ProjectKey
+	if project == "" || strings.EqualFold(ticketProject(t), project) {
+		return ""
+	}
+	return fmt.Sprintf("Symphony only watches project %s", project)
 }
 
 func containsFold(list []string, want string) bool {
@@ -115,20 +142,27 @@ func containsFold(list []string, want string) bool {
 // planSchedule works out how to make a ticket eligible for Symphony.
 //
 // Symphony's conditions come from the tracker block of WORKFLOW.md: the issue
-// must belong to project_key, carry every required_label, and sit in one of
-// active_states. terminal_states are refused rather than reopened, since
-// restarting finished work is a bigger decision than a keystroke should make.
+// must belong to project_key (a repository's owner/repo for GitHub), carry every
+// required_label, and sit in one of active_states. terminal_states are refused
+// rather than reopened, since restarting finished work is a bigger decision
+// than a keystroke should make. A GitHub issue's status plays no part: only
+// its labels change.
 func planSchedule(cfg symphonyConfig, t Ticket) schedulePlan {
 	plan := schedulePlan{key: t.Key}
 	tracker := cfg.Tracker
 
-	if project := tracker.Provider.ProjectKey; project != "" {
-		prefix, _, _ := strings.Cut(t.Key, "-")
-		if !strings.EqualFold(prefix, project) {
-			plan.refusal = fmt.Sprintf("Symphony only watches project %s", project)
-			return plan
+	if plan.refusal = projectRefusal(cfg, t); plan.refusal != "" {
+		return plan
+	}
+	for _, want := range tracker.RequiredLabels {
+		if !containsFold(t.Labels, want) {
+			plan.addLabels = append(plan.addLabels, want)
 		}
 	}
+	if labelsOnly(t) {
+		return plan
+	}
+
 	if containsFold(tracker.TerminalStates, t.Status) {
 		plan.refusal = fmt.Sprintf("%s is %s, which Symphony treats as finished", t.Key, t.Status)
 		return plan
@@ -136,12 +170,6 @@ func planSchedule(cfg symphonyConfig, t Ticket) schedulePlan {
 	if len(tracker.ActiveStates) == 0 {
 		plan.refusal = "WORKFLOW.md lists no active_states for Symphony"
 		return plan
-	}
-
-	for _, want := range tracker.RequiredLabels {
-		if !containsFold(t.Labels, want) {
-			plan.addLabels = append(plan.addLabels, want)
-		}
 	}
 	if !containsFold(tracker.ActiveStates, t.Status) {
 		// The first active state is the queue Symphony draws from; its own
@@ -153,15 +181,15 @@ func planSchedule(cfg symphonyConfig, t Ticket) schedulePlan {
 
 // applySchedule carries out a plan: labels first, then the transition, so a
 // failure to transition still leaves the ticket labelled and visibly closer.
-func applySchedule(ctx context.Context, jira *jiraClient, plan schedulePlan) error {
-	if err := jira.UpdateLabels(ctx, plan.key, plan.addLabels, plan.removeLabels); err != nil {
+func applySchedule(ctx context.Context, ed Editor, plan schedulePlan) error {
+	if err := ed.UpdateLabels(ctx, plan.key, plan.addLabels, plan.removeLabels); err != nil {
 		return err
 	}
 	if plan.toStatus == "" {
 		return nil
 	}
 
-	transitions, err := jira.Transitions(ctx, plan.key)
+	transitions, err := ed.Transitions(ctx, plan.key)
 	if err != nil {
 		return err
 	}
@@ -169,7 +197,7 @@ func applySchedule(ctx context.Context, jira *jiraClient, plan schedulePlan) err
 		if !strings.EqualFold(tr.To, plan.toStatus) || len(tr.Required) > 0 {
 			continue
 		}
-		return jira.ApplyTransition(ctx, plan.key, tr.ID, nil)
+		return ed.ApplyTransition(ctx, plan.key, tr)
 	}
 	return fmt.Errorf("no transition from %s to %s that needs no extra fields",
 		plan.key, plan.toStatus)

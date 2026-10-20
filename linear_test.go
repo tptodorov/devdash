@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 )
 
@@ -192,5 +193,28 @@ func TestNewLinearClientRequiresAPIKey(t *testing.T) {
 	}
 	if c.apiKey != "secret" {
 		t.Errorf("apiKey = %q, want secret", c.apiKey)
+	}
+}
+
+// A duplicate is finished work, like a completed or canceled issue: it belongs
+// in Done and out of the default "not done" scope.
+func TestLinearTreatsDuplicateAsDone(t *testing.T) {
+	if got := linearCategory("duplicate"); got != "Done" {
+		t.Errorf("linearCategory(duplicate) = %q, want Done", got)
+	}
+	var filter struct {
+		State struct {
+			Type struct {
+				Nin []string `json:"nin"`
+			} `json:"type"`
+		} `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(DefaultLinearFilter), &filter); err != nil {
+		t.Fatalf("parsing DefaultLinearFilter: %v", err)
+	}
+	for _, typ := range []string{"completed", "canceled", "duplicate"} {
+		if !slices.Contains(filter.State.Type.Nin, typ) {
+			t.Errorf("DefaultLinearFilter keeps %s issues; want them left out", typ)
+		}
 	}
 }

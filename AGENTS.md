@@ -41,3 +41,17 @@ skills add <owner/repo> --skill <skill-name> --agent claude-code -y
 
 This writes the skill into `.claude/skills/` and records it in
 `skills-lock.json`. Commit both.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in this repo's GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default triage labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: read root `GLOSSARY.md` and relevant ADRs in `docs/adr/`. See `docs/agents/domain.md`.

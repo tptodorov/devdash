@@ -41,9 +41,10 @@ func writeHelp(w io.Writer) {
 	section(w, "WHAT IT DOES")
 	for _, line := range []string{
 		"Fetches every issue assigned to you from JIRA, Linear, or both — whichever",
-		"has credentials configured — skipping anything already Done, and every open",
-		"pull request you authored, then correlates them. A PR attaches to a ticket",
-		"when its key appears in the PR's title, falling back to its branch name.",
+		"has credentials configured, else this repository's GitHub issues — skipping",
+		"anything already Done, and every open pull request you authored, then",
+		"correlates them. A PR attaches to a ticket when its key appears in the",
+		"PR's title, falling back to its branch name.",
 		"",
 		"Tickets are grouped by status, most urgent first, and colour coded. Pull",
 		"requests matching no active ticket are listed under their own heading",
@@ -73,7 +74,8 @@ func writeHelp(w io.Writer) {
 			envStatus(req.name))
 	}
 	fmt.Fprintf(w, "\n  %s\n", faintStyle.Render("Set the JIRA_* group, LINEAR_API_KEY, or both — every tracker with keys"))
-	fmt.Fprintf(w, "  %s\n", faintStyle.Render("set is shown. Every API is called directly over HTTPS. If you use the"))
+	fmt.Fprintf(w, "  %s\n", faintStyle.Render("set is shown. With neither, the GitHub issues of this repository are used."))
+	fmt.Fprintf(w, "  %s\n", faintStyle.Render("Every API is called directly over HTTPS. If you use the"))
 	fmt.Fprintf(w, "  %s\n", faintStyle.Render("GitHub CLI:"))
 	fmt.Fprintf(w, "  %s\n", mutedStyle.Render("export GITHUB_TOKEN=$(gh auth token)"))
 
@@ -112,7 +114,7 @@ func writeHelp(w io.Writer) {
 	prose(w, "")
 	row(w, "Symphony", "the Symphony dashboard")
 	row(w, "relation", "a JIRA search for the ticket's sub-tickets")
-	row(w, "ticket", "the ticket, in JIRA or Linear")
+	row(w, "ticket", "the ticket, in JIRA, Linear or GitHub")
 	row(w, "pull request", "that pull request; each one on the row is its own column")
 	prose(w, "")
 	prose(w, "Columns appear only when they do on screen, so left and right never land")
@@ -123,7 +125,7 @@ func writeHelp(w io.Writer) {
 	row(w, "attention", "leftmost: the one thing this row wants from you, if anything")
 	row(w, "symphony", "what an agent is doing with the ticket, when one has it")
 	row(w, "relation", "+N sub-tickets, or "+iconSubtask+" when the ticket is itself a sub-task")
-	row(w, "ticket", "key and summary, hyperlinked to JIRA or Linear")
+	row(w, "ticket", "key and summary, hyperlinked to its tracker")
 	row(w, "pull request", "repo and number, coloured by state, then checks and review")
 	row(w, "PR title", "up to 30 columns, with the ticket key it repeats dropped")
 	prose(w, "")
@@ -167,11 +169,12 @@ func writeHelp(w io.Writer) {
 		fmt.Fprintf(w, "  %s%s\n", style.Render(pad(marker, 22)), mutedStyle.Render(s.what))
 	}
 	prose(w, "")
-	prose(w, "S toggles the selected ticket in and out of Symphony's queue, on JIRA tickets")
-	prose(w, "only — Linear has no Symphony equivalent, and pressing S on a Linear ticket")
-	prose(w, "flashes as much. The conditions come from the tracker block of WORKFLOW.md, so")
-	prose(w, "nothing here is assumed: the ticket must belong to project_key, carry every")
-	prose(w, "required_label, and sit in one of active_states.")
+	prose(w, "S toggles the selected ticket in and out of Symphony's queue, for tickets from")
+	prose(w, "the tracker WORKFLOW.md names in tracker.kind. The conditions come from its")
+	prose(w, "tracker block, so nothing here is assumed: the ticket must belong to")
+	prose(w, "project_key (owner/repo for GitHub), carry every required_label, and sit in")
+	prose(w, "one of active_states. A GitHub issue only needs to be open and labelled: S")
+	prose(w, "changes its labels, never its state.")
 	prose(w, "")
 	prose(w, "On a ticket Symphony would not pick up, S adds whatever is missing. On one it")
 	prose(w, "already would, S removes the required labels again, leaving the status alone.")
@@ -256,7 +259,7 @@ func writeHelp(w io.Writer) {
 
 	fmt.Fprintf(w, "\n  %s\n", faintStyle.Render("GitHub, at api.github.com"))
 	for _, c := range [][2]string{
-		{"POST /graphql", "searches your open pull requests"},
+		{"POST /graphql", "searches your open pull requests, and the issues when GitHub is the tracker"},
 		{"GET  /repos/{owner}/{name}", "confirms the repo name, following renames"},
 	} {
 		fmt.Fprintf(w, "    %s%s\n", normalStyle.Render(pad(c[0], 42)), mutedStyle.Render(c[1]))
@@ -276,7 +279,7 @@ func writeHelp(w io.Writer) {
 		fmt.Fprintf(w, "    %s%s\n", normalStyle.Render(pad(c[0], 42)), mutedStyle.Render(c[1]))
 	}
 	fmt.Fprintf(w, "\n  %s\n",
-		faintStyle.Render("Nothing is written anywhere except the clipboard, and JIRA when you press s."))
+		faintStyle.Render("Nothing is written anywhere except the clipboard, and your tracker when you press s or S."))
 
 	section(w, "SCOPE")
 	for _, line := range []string{

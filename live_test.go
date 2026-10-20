@@ -74,14 +74,14 @@ func TestLiveTransitionRoundTrip(t *testing.T) {
 		}
 		rctx, rcancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer rcancel()
-		if err := c.ApplyTransition(rctx, key, back.ID, nil); err != nil {
+		if err := c.ApplyTransition(rctx, key, Transition{ID: back.ID}); err != nil {
 			t.Errorf("FAILED TO RESTORE %s to %q: %v", key, original, err)
 			return
 		}
 		t.Logf("restored %s to %q in cleanup", key, original)
 	}()
 
-	if err := c.ApplyTransition(ctx, key, out.ID, nil); err != nil {
+	if err := c.ApplyTransition(ctx, key, Transition{ID: out.ID}); err != nil {
 		t.Fatalf("ApplyTransition() to %q: %v", out.To, err)
 	}
 
@@ -106,7 +106,7 @@ func TestLiveTransitionRoundTrip(t *testing.T) {
 		t.Errorf("search reports %q, want %q", tickets[0].Status, out.To)
 	}
 
-	if err := c.ApplyTransition(ctx, key, back.ID, nil); err != nil {
+	if err := c.ApplyTransition(ctx, key, Transition{ID: back.ID}); err != nil {
 		t.Fatalf("ApplyTransition() back to %q: %v", original, err)
 	}
 	restored = true

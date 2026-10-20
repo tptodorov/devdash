@@ -78,6 +78,9 @@ func findWorkflowFile(dir string) (string, error) {
 // tickets Symphony will pick up, and where its server listens.
 type symphonyConfig struct {
 	Tracker struct {
+		// Kind names the tracker Symphony watches, such as jira, linear or
+		// github; empty when WORKFLOW.md does not say.
+		Kind     string `yaml:"kind"`
 		Provider struct {
 			ProjectKey string `yaml:"project_key"`
 		} `yaml:"provider"`
@@ -140,6 +143,13 @@ func readSymphonyConfig(dir string) (symphonyConfig, error) {
 		return cfg, fmt.Errorf("parsing %s front matter: %w", filepath.Base(path), err)
 	}
 	return cfg, nil
+}
+
+// watches reports whether Symphony watches tickets from the tracker called
+// source. Symphony works one tracker, named by tracker.kind; a WORKFLOW.md that
+// does not name one is taken to watch whichever tracker the ticket is from.
+func (c symphonyConfig) watches(source string) bool {
+	return c.Tracker.Kind == "" || strings.EqualFold(c.Tracker.Kind, source)
 }
 
 // symphonyServer reports where the Symphony server for this tree listens. The
@@ -234,18 +244,17 @@ type symphonyInfo struct {
 }
 
 // applySymphony marks each ticket with what Symphony is doing about it. Only
-// tickets from source are touched: planSchedule's conditions are JIRA
-// workflow conditions, so a ticket from another tracker that happens to match
-// them is left alone rather than shown as Symphony-scheduled work Symphony
-// can never actually act on.
+// tickets from the tracker Symphony watches are touched: a ticket from another
+// tracker that happens to share a key or match its conditions is left alone
+// rather than shown as Symphony-scheduled work Symphony can never act on.
 //
 // A live session wins, because it is what is happening now. Otherwise a ticket
 // that already meets every condition in WORKFLOW.md is marked scheduled: queued,
 // but not yet picked up. The distinction matters because Symphony polls, so a
 // freshly scheduled ticket sits waiting for up to one interval.
-func applySymphony(tickets []Ticket, info symphonyInfo, source string) {
+func applySymphony(tickets []Ticket, info symphonyInfo) {
 	for i := range tickets {
-		if tickets[i].Source != source {
+		if !info.cfg.watches(tickets[i].Source) {
 			continue
 		}
 		if state, busy := info.live[strings.ToUpper(tickets[i].Key)]; busy {

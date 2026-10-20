@@ -2,7 +2,9 @@ package main
 
 import (
 	"regexp"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -24,11 +26,13 @@ type Ticket struct {
 	// running, blocked, retrying, or empty when Symphony is not on it.
 	Symphony string
 	PRs      []PullRequest
+	// LinkedPRs holds the URLs of pull requests the tracker itself says
+	// address this ticket, such as GitHub's closing references, so they match
+	// even when no key appears in the pull request's title or branch.
+	LinkedPRs []string
 	// Source names the Tracker this ticket came from, e.g. "JIRA" or
-	// "Linear". Write actions (status change, Symphony scheduling) are JIRA
-	// workflows with no equivalent wired up for other trackers, so they are
-	// gated on this field rather than on which trackers happen to be
-	// configured.
+	// "Linear" or "GitHub". It tells apart tickets from different trackers
+	// that share a key, and picks the tracker a write action goes to.
 	Source string
 }
 
@@ -106,13 +110,30 @@ type group struct {
 // ticketKeyRE matches JIRA keys such as PROJ-17506 or TEAM-205732.
 var ticketKeyRE = regexp.MustCompile(`\b([A-Z][A-Z0-9]{1,9})-(\d+)\b`)
 
+// issueNumberRE matches a GitHub issue reference such as #123 in group 1. The
+// first alternative swallows another repository's acme/other#123 so it never
+// reaches group 1, and \b rejects a hex colour like #123abc.
+var issueNumberRE = regexp.MustCompile(`[\w.-]+/[\w.-]+#\d+|(?:^|\W)(#\d+)\b`)
+
 // ticketKeyFor extracts the ticket key a pull request addresses, preferring the
-// title (where the convention puts it) and falling back to the branch name.
+// title (where the convention puts it) and falling back to the branch name. A
+// tracker key such as PROJ-17 wins over a bare GitHub issue number #17.
 func ticketKeyFor(pr PullRequest) string {
-	if m := ticketKeyRE.FindString(pr.Title); m != "" {
-		return m
+	for _, s := range []string{pr.Title, pr.Branch} {
+		if m := ticketKeyRE.FindString(s); m != "" {
+			return m
+		}
 	}
-	return ticketKeyRE.FindString(pr.Branch)
+	for _, s := range []string{pr.Title, pr.Branch} {
+		for _, m := range issueNumberRE.FindAllStringSubmatch(s, -1) {
+			// GitHub numbers issues and pull requests together, so a PR's own
+			// number (a squash-merge's "(#45)") is never the issue it addresses.
+			if m[1] != "" && m[1] != "#"+strconv.Itoa(pr.Number) {
+				return m[1]
+			}
+		}
+	}
+	return ""
 }
 
 // statusRank orders known workflow statuses so the most urgent appear first.
@@ -157,16 +178,31 @@ func build(tickets []Ticket, prs []PullRequest) ([]group, []PullRequest) {
 		byKey[key] = append(byKey[key], i)
 	}
 
+	// A tracker can also name the pull requests that address a ticket outright,
+	// which matches PRs that carry no key.
+	byLink := map[string][]int{}
+	for i, t := range tickets {
+		for _, u := range t.LinkedPRs {
+			byLink[u] = append(byLink[u], i)
+		}
+	}
+
 	var orphans []PullRequest
 	for _, pr := range prs {
 		pr.Ticket = ticketKeyFor(pr)
-		if idxs, ok := byKey[strings.ToUpper(pr.Ticket)]; ok {
-			for _, i := range idxs {
-				tickets[i].PRs = append(tickets[i].PRs, pr)
+		idxs := slices.Clone(byKey[strings.ToUpper(pr.Ticket)])
+		for _, i := range byLink[pr.URL] {
+			if !slices.Contains(idxs, i) {
+				idxs = append(idxs, i)
 			}
+		}
+		if len(idxs) == 0 {
+			orphans = append(orphans, pr)
 			continue
 		}
-		orphans = append(orphans, pr)
+		for _, i := range idxs {
+			tickets[i].PRs = append(tickets[i].PRs, pr)
+		}
 	}
 
 	for i := range tickets {

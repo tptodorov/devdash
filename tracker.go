@@ -14,6 +14,20 @@ type Tracker interface {
 	Tickets(ctx context.Context, query string) ([]Ticket, error)
 }
 
+// Editor is a Tracker whose tickets can also be changed from the dashboard:
+// moved to another status and relabelled. Every tracker devdash reads from
+// implements it, so the status picker and Symphony scheduling work on all of
+// them.
+type Editor interface {
+	// Transitions lists the moves the ticket may make right now.
+	Transitions(ctx context.Context, key string) ([]Transition, error)
+	// ApplyTransition performs one of those moves. A move with Required fields
+	// carries the chosen answers in its Values.
+	ApplyTransition(ctx context.Context, key string, tr Transition) error
+	// UpdateLabels adds and removes labels without touching other fields.
+	UpdateLabels(ctx context.Context, key string, add, remove []string) error
+}
+
 // trackerSource pairs a configured Tracker with the query that selects its
 // tickets.
 type trackerSource struct {
